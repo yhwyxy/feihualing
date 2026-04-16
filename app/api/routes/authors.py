@@ -1,0 +1,259 @@
+from fastapi import APIRouter, HTTPException, Query
+
+from app.db.connection import get_connection
+from app.schemas.author import (
+    AuthorCreate,
+    AuthorListResponse,
+    AuthorPatch,
+    AuthorRead,
+    AuthorUpdate,
+)
+from app.schemas.poem import MessageResponse, PoemListResponse, PoemRead
+
+router = APIRouter()
+
+
+def serialize_author(row) -> AuthorRead:
+    return AuthorRead(
+        id=row[0],
+        name=row[1],
+        bio=row[2],
+        created_at=row[3],
+    )
+
+
+def serialize_author_poem(row) -> PoemRead:
+    return PoemRead(
+        id=row[0],
+        title=row[1],
+        author_id=row[2],
+        author=row[3],
+        content=row[4],
+        created_at=row[5],
+    )
+
+
+@router.get(
+    "/authors",
+    tags=["authors"],
+    response_model=AuthorListResponse,
+    summary="获取作者列表",
+)
+def list_authors(
+    keyword: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    base_query = """
+        FROM authors
+    """
+    params: list[object] = []
+    conditions: list[str] = []
+
+    if keyword:
+        conditions.append("name ILIKE %s")
+        params.append(f"%{keyword}%")
+
+    if conditions:
+        base_query += " WHERE " + " AND ".join(conditions)
+
+    list_query = (
+        "SELECT id, name, bio, created_at"
+        + base_query
+        + " ORDER BY id DESC LIMIT %s OFFSET %s"
+    )
+    count_query = "SELECT COUNT(*)" + base_query
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(count_query, params)
+            total = cur.fetchone()[0]
+
+            cur.execute(list_query, [*params, limit, offset])
+            rows = cur.fetchall()
+
+    return AuthorListResponse(
+        items=[serialize_author(row) for row in rows],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get(
+    "/authors/{author_id}/poems",
+    tags=["authors"],
+    response_model=PoemListResponse,
+    summary="获取作者名下诗词",
+)
+def list_author_poems(
+    author_id: int,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name FROM authors WHERE id = %s", (author_id,))
+            author_row = cur.fetchone()
+            if author_row is None:
+                raise HTTPException(status_code=404, detail="Author not found")
+
+            cur.execute("SELECT COUNT(*) FROM poems WHERE author_id = %s", (author_id,))
+            total = cur.fetchone()[0]
+
+            cur.execute(
+                """
+                SELECT p.id, p.title, p.author_id, a.name, p.content, p.created_at
+                FROM poems p
+                JOIN authors a ON a.id = p.author_id
+                WHERE p.author_id = %s
+                ORDER BY p.id DESC
+                LIMIT %s OFFSET %s
+                """,
+                (author_id, limit, offset),
+            )
+            rows = cur.fetchall()
+
+    return PoemListResponse(
+        items=[serialize_author_poem(row) for row in rows],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get(
+    "/authors/{author_id}",
+    tags=["authors"],
+    response_model=AuthorRead,
+    summary="获取作者详情",
+)
+def get_author(author_id: int):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, name, bio, created_at
+                FROM authors
+                WHERE id = %s
+                """,
+                (author_id,),
+            )
+            row = cur.fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Author not found")
+
+    return serialize_author(row)
+
+
+@router.post(
+    "/authors",
+    tags=["authors"],
+    response_model=AuthorRead,
+    summary="新增作者",
+)
+def create_author(author: AuthorCreate):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO authors (name, bio)
+                VALUES (%s, %s)
+                RETURNING id, name, bio, created_at
+                """,
+                (author.name, author.bio),
+            )
+            row = cur.fetchone()
+        conn.commit()
+
+    return serialize_author(row)
+
+
+@router.put(
+    "/authors/{author_id}",
+    tags=["authors"],
+    response_model=AuthorRead,
+    summary="更新作者",
+)
+def update_author(author_id: int, author: AuthorUpdate):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE authors
+                SET name = %s, bio = %s
+                WHERE id = %s
+                RETURNING id, name, bio, created_at
+                """,
+                (author.name, author.bio, author_id),
+            )
+            row = cur.fetchone()
+        conn.commit()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Author not found")
+
+    return serialize_author(row)
+
+
+@router.patch(
+    "/authors/{author_id}",
+    tags=["authors"],
+    response_model=AuthorRead,
+    summary="局部更新作者",
+)
+def patch_author(author_id: int, author: AuthorPatch):
+    update_data = author.model_dump(exclude_none=True)
+
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    assignments = ", ".join(f"{field} = %s" for field in update_data)
+    params = list(update_data.values())
+    params.append(author_id)
+
+    query = f"""
+        UPDATE authors
+        SET {assignments}
+        WHERE id = %s
+        RETURNING id, name, bio, created_at
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+            row = cur.fetchone()
+        conn.commit()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Author not found")
+
+    return serialize_author(row)
+
+
+@router.delete(
+    "/authors/{author_id}",
+    tags=["authors"],
+    response_model=MessageResponse,
+    summary="删除作者",
+)
+def delete_author(author_id: int):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM poems WHERE author_id = %s", (author_id,))
+            poem_count = cur.fetchone()[0]
+            if poem_count > 0:
+                raise HTTPException(status_code=409, detail="Author still has poems")
+
+            cur.execute(
+                "DELETE FROM authors WHERE id = %s RETURNING id",
+                (author_id,),
+            )
+            row = cur.fetchone()
+        conn.commit()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Author not found")
+
+    return MessageResponse(message="Author deleted")

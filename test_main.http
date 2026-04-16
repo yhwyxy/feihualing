@@ -1,0 +1,202 @@
+# FastAPI manual requests
+# Seed demo data first: make seed
+
+GET http://127.0.0.1:8000/
+Accept: application/json
+
+###
+
+GET http://127.0.0.1:8000/health
+Accept: application/json
+
+###
+
+GET http://127.0.0.1:8000/health/db
+Accept: application/json
+
+###
+
+GET http://127.0.0.1:8000/poems
+Accept: application/json
+
+###
+
+GET http://127.0.0.1:8000/poems?author_id=3&limit=5&offset=0
+Accept: application/json
+
+###
+
+GET http://127.0.0.1:8000/poems?author_name=李&limit=5&offset=0
+Accept: application/json
+
+###
+
+GET http://127.0.0.1:8000/poems?collection_id=1&limit=5&offset=0
+Accept: application/json
+
+###
+
+GET http://127.0.0.1:8000/poems?keyword=春&limit=5&offset=0
+Accept: application/json
+
+###
+
+GET http://127.0.0.1:8000/poems?limit=3&offset=0
+Accept: application/json
+
+###
+
+GET http://127.0.0.1:8000/poems/1
+Accept: application/json
+
+###
+
+POST http://127.0.0.1:8000/poems
+Content-Type: application/json
+
+{
+  "title": "黄鹤楼送孟浩然之广陵",
+  "author_id": 1,
+  "content": "故人西辞黄鹤楼，\n烟花三月下扬州。\n孤帆远影碧空尽，\n唯见长江天际流。"
+}
+
+###
+
+PUT http://127.0.0.1:8000/poems/1
+Content-Type: application/json
+
+{
+  "title": "静夜思",
+  "author_id": 1,
+  "content": "床前明月光，\n疑是地上霜。\n举头望明月，\n低头思故乡。"
+}
+
+###
+
+PATCH http://127.0.0.1:8000/poems/1
+Content-Type: application/json
+
+{
+  "author_id": 1,
+  "content": "床前明月光，\n疑是地上霜。\n举头望明月，\n低头思故乡。"
+}
+
+###
+
+###
+
+GET http://127.0.0.1:8000/authors
+Accept: application/json
+
+###
+
+GET http://127.0.0.1:8000/authors?keyword=李&limit=5&offset=0
+Accept: application/json
+
+###
+
+POST http://127.0.0.1:8000/authors
+Content-Type: application/json
+
+{
+  "name": "李白",
+  "bio": "唐代诗人，字太白，号青莲居士。"
+}
+
+###
+
+GET http://127.0.0.1:8000/authors/1/poems?limit=5&offset=0
+Accept: application/json
+
+###
+
+PUT http://127.0.0.1:8000/authors/1
+Content-Type: application/json
+
+{
+  "name": "李白",
+  "bio": "唐代著名诗人，浪漫主义诗歌代表人物。"
+}
+
+###
+
+PATCH http://127.0.0.1:8000/authors/1
+Content-Type: application/json
+
+{
+  "bio": "唐代著名诗人。"
+}
+
+###
+
+###
+
+GET http://127.0.0.1:8000/collections
+Accept: application/json
+
+###
+
+GET http://127.0.0.1:8000/collections?keyword=唐&limit=5&offset=0
+Accept: application/json
+
+###
+
+POST http://127.0.0.1:8000/collections
+Content-Type: application/json
+
+{
+  "name": "唐诗精选",
+  "description": "收录常见唐诗名篇。"
+}
+
+###
+
+GET http://127.0.0.1:8000/collections/1/poems?limit=5&offset=0
+Accept: application/json
+
+###
+
+POST http://127.0.0.1:8000/collections/1/poems
+Content-Type: application/json
+
+{
+  "poem_id": 1
+}
+
+###
+
+PUT http://127.0.0.1:8000/collections/1/poems
+Content-Type: application/json
+
+{
+  "poem_ids": [1, 2]
+}
+
+###
+
+DELETE http://127.0.0.1:8000/collections/1/poems/1
+Accept: application/json
+
+###
+
+PUT http://127.0.0.1:8000/collections/1
+Content-Type: application/json
+
+{
+  "name": "唐诗精选",
+  "description": "收录常见唐诗与代表作。"
+}
+
+###
+
+PATCH http://127.0.0.1:8000/collections/1
+Content-Type: application/json
+
+{
+  "description": "常见唐诗合集。"
+}
+
+###
+
+DELETE http://127.0.0.1:8000/collections/1
+Accept: application/json
