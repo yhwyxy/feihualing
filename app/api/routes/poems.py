@@ -68,7 +68,7 @@ def list_poems(
     list_query = (
         "SELECT p.id, p.title, p.author_id, a.name, p.content, p.created_at"
         + base_query
-        + " ORDER BY p.id DESC LIMIT %s OFFSET %s"
+        + " ORDER BY p.id ASC LIMIT %s OFFSET %s"
     )
     count_query = "SELECT COUNT(*)" + base_query
 

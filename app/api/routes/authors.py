@@ -60,7 +60,7 @@ def list_authors(
     list_query = (
         "SELECT id, name, bio, created_at"
         + base_query
-        + " ORDER BY id DESC LIMIT %s OFFSET %s"
+        + " ORDER BY id ASC LIMIT %s OFFSET %s"
     )
     count_query = "SELECT COUNT(*)" + base_query
 
@@ -107,7 +107,7 @@ def list_author_poems(
                 FROM poems p
                 JOIN authors a ON a.id = p.author_id
                 WHERE p.author_id = %s
-                ORDER BY p.id DESC
+                ORDER BY p.id ASC
                 LIMIT %s OFFSET %s
                 """,
                 (author_id, limit, offset),

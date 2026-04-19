@@ -83,7 +83,7 @@ def list_collections(
     list_query = (
         "SELECT id, name, description, created_at"
         + base_query
-        + " ORDER BY id DESC LIMIT %s OFFSET %s"
+        + " ORDER BY id ASC LIMIT %s OFFSET %s"
     )
     count_query = "SELECT COUNT(*)" + base_query
 
@@ -159,7 +159,7 @@ def list_collection_poems(
                 JOIN poems p ON p.id = cp.poem_id
                 JOIN authors a ON a.id = p.author_id
                 WHERE cp.collection_id = %s
-                ORDER BY cp.created_at DESC
+                ORDER BY cp.created_at ASC
                 LIMIT %s OFFSET %s
                 """,
                 (collection_id, limit, offset),
