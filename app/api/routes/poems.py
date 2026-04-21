@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
 from app.db.connection import get_connection
 from app.schemas.poem import (
@@ -9,6 +9,7 @@ from app.schemas.poem import (
     PoemRead,
     PoemUpdate,
 )
+from app.services.embeddings import sync_poem_embedding
 
 router = APIRouter()
 
@@ -120,7 +121,7 @@ def get_poem(poem_id: int):
     response_model=PoemRead,
     summary="新增诗词",
 )
-def create_poem(poem: PoemCreate):
+def create_poem(poem: PoemCreate, background_tasks: BackgroundTasks):
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT id, name FROM authors WHERE id = %s", (poem.author_id,))
@@ -139,6 +140,8 @@ def create_poem(poem: PoemCreate):
             row = cur.fetchone()
         conn.commit()
 
+    background_tasks.add_task(sync_poem_embedding, row[0])
+
     return PoemRead(
         id=row[0],
         title=row[1],
@@ -155,7 +158,7 @@ def create_poem(poem: PoemCreate):
     response_model=PoemRead,
     summary="更新诗词",
 )
-def update_poem(poem_id: int, poem: PoemUpdate):
+def update_poem(poem_id: int, poem: PoemUpdate, background_tasks: BackgroundTasks):
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT id, name FROM authors WHERE id = %s", (poem.author_id,))
@@ -178,6 +181,8 @@ def update_poem(poem_id: int, poem: PoemUpdate):
     if row is None:
         raise HTTPException(status_code=404, detail="Poem not found")
 
+    background_tasks.add_task(sync_poem_embedding, row[0])
+
     return PoemRead(
         id=row[0],
         title=row[1],
@@ -194,7 +199,7 @@ def update_poem(poem_id: int, poem: PoemUpdate):
     response_model=PoemRead,
     summary="局部更新诗词",
 )
-def patch_poem(poem_id: int, poem: PoemPatch):
+def patch_poem(poem_id: int, poem: PoemPatch, background_tasks: BackgroundTasks):
     update_data = poem.to_update_data()
 
     if not update_data:
@@ -228,6 +233,8 @@ def patch_poem(poem_id: int, poem: PoemPatch):
         with conn.cursor() as cur:
             cur.execute("SELECT name FROM authors WHERE id = %s", (row[2],))
             author_name = cur.fetchone()[0]
+
+    background_tasks.add_task(sync_poem_embedding, row[0])
 
     return PoemRead(
         id=row[0],

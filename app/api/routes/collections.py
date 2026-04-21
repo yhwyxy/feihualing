@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
 from app.db.connection import get_connection
 from app.schemas.collection import (
@@ -13,6 +13,7 @@ from app.schemas.collection import (
     CollectionUpdate,
 )
 from app.schemas.poem import MessageResponse, PoemRead
+from app.services.embeddings import sync_collection_embedding
 
 router = APIRouter()
 
@@ -180,7 +181,7 @@ def list_collection_poems(
     response_model=CollectionRead,
     summary="新增合集",
 )
-def create_collection(collection: CollectionCreate):
+def create_collection(collection: CollectionCreate, background_tasks: BackgroundTasks):
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -193,6 +194,8 @@ def create_collection(collection: CollectionCreate):
             )
             row = cur.fetchone()
         conn.commit()
+
+    background_tasks.add_task(sync_collection_embedding, row[0])
 
     return serialize_collection(row)
 
@@ -290,7 +293,7 @@ def remove_poem_from_collection(collection_id: int, poem_id: int):
     response_model=CollectionRead,
     summary="更新合集",
 )
-def update_collection(collection_id: int, collection: CollectionUpdate):
+def update_collection(collection_id: int, collection: CollectionUpdate, background_tasks: BackgroundTasks):
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -308,6 +311,8 @@ def update_collection(collection_id: int, collection: CollectionUpdate):
     if row is None:
         raise HTTPException(status_code=404, detail="Collection not found")
 
+    background_tasks.add_task(sync_collection_embedding, row[0])
+
     return serialize_collection(row)
 
 
@@ -317,7 +322,7 @@ def update_collection(collection_id: int, collection: CollectionUpdate):
     response_model=CollectionRead,
     summary="局部更新合集",
 )
-def patch_collection(collection_id: int, collection: CollectionPatch):
+def patch_collection(collection_id: int, collection: CollectionPatch, background_tasks: BackgroundTasks):
     update_data = collection.to_update_data()
 
     if not update_data:
@@ -342,6 +347,8 @@ def patch_collection(collection_id: int, collection: CollectionPatch):
 
     if row is None:
         raise HTTPException(status_code=404, detail="Collection not found")
+
+    background_tasks.add_task(sync_collection_embedding, row[0])
 
     return serialize_collection(row)
 

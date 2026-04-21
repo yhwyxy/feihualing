@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChangeEvent, FormEvent, useState } from 'react'
+import { ChangeEvent, FormEvent, useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 
 import { createAuthor, listAuthors } from '../api/authors'
@@ -16,10 +16,30 @@ import type {
 } from '../types/api'
 
 const navItems = [
-  { to: '/poems', label: '诗词' },
-  { to: '/authors', label: '作者' },
-  { to: '/collections', label: '合集' },
+  { to: '/feihualing', label: '飞花令' },
+  { to: '/workspace', label: '工作台' },
 ]
+
+const SIDEBAR_COLLAPSED_KEY = 'feihualing:sidebar:collapsed'
+
+function SidebarToggleIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="3" y="4" width="18" height="16" rx="2.5" />
+      <line x1="9.5" y1="4" x2="9.5" y2="20" />
+    </svg>
+  )
+}
 
 const EMPTY_POEM_FORM: PoemWritePayload = {
   title: '',
@@ -181,6 +201,18 @@ export function AppShell() {
   const [collectionFormOpen, setCollectionFormOpen] = useState(false)
   const [importFormOpen, setImportFormOpen] = useState(false)
   const [message, setMessage] = useState('')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1'
+  })
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed ? '1' : '0')
+    } catch {
+      // ignore
+    }
+  }, [sidebarCollapsed])
   const [poemFormData, setPoemFormData] = useState<PoemWritePayload>(EMPTY_POEM_FORM)
   const [authorFormData, setAuthorFormData] = useState<AuthorWritePayload>(EMPTY_AUTHOR_FORM)
   const [collectionFormData, setCollectionFormData] = useState<CollectionWritePayload>(EMPTY_COLLECTION_FORM)
@@ -347,8 +379,8 @@ export function AppShell() {
   }
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
+    <div className={`app-shell ${sidebarCollapsed ? 'app-shell-collapsed' : ''}`}>
+      <aside className="sidebar" aria-hidden={sidebarCollapsed}>
         <div>
           <p className="sidebar-eyebrow">feihualing</p>
           <h1 className="sidebar-title">飞花令</h1>
@@ -371,10 +403,15 @@ export function AppShell() {
 
       <div className="content-shell">
         <header className="topbar">
-          <div>
-            <p className="topbar-title">Poetry Workspace</p>
-            <p className="topbar-subtitle">macOS 风格的飞花令前端第一版</p>
-          </div>
+          <button
+            type="button"
+            className="sidebar-toggle"
+            onClick={() => setSidebarCollapsed((v) => !v)}
+            aria-label={sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
+            title={sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
+          >
+            <SidebarToggleIcon />
+          </button>
         </header>
         <main className="page-container">
           {message ? <p className="hint">{message}</p> : null}

@@ -118,3 +118,191 @@ export interface BatchImportResponse {
   summary: BatchImportSummary
   warnings: BatchImportWarning[]
 }
+
+
+export interface RagSearchRequest {
+  query: string
+  top_k?: number
+}
+
+export interface RagPoemHit {
+  id: number
+  title: string
+  content: string
+  author_id: number | null
+  author_name: string | null
+  score: number
+  sem_score: number
+  kw_score: number
+}
+
+export interface RagAuthorHit {
+  id: number
+  name: string
+  bio: string | null
+  score: number
+  sem_score: number
+  kw_score: number
+}
+
+export interface RagCollectionHit {
+  id: number
+  name: string
+  description: string | null
+  score: number
+  sem_score: number
+  kw_score: number
+}
+
+export interface RagDocumentChunkHit {
+  chunk_id: number
+  document_id: number
+  document_title: string
+  chunk_index: number
+  content: string
+  score: number
+  sem_score: number
+  kw_score: number
+}
+
+export interface RagSearchResponse {
+  query: string
+  poems: RagPoemHit[]
+  authors: RagAuthorHit[]
+  collections: RagCollectionHit[]
+  document_chunks: RagDocumentChunkHit[]
+}
+
+
+export interface RagAskPoemSource {
+  id: number
+  title: string
+  author: string | null
+  content: string
+}
+
+export interface RagAskDocChunkSource {
+  document_id: number
+  chunk_index: number
+  document_title: string
+  content: string
+}
+
+export interface RagAskSources {
+  poems: RagAskPoemSource[]
+  document_chunks: RagAskDocChunkSource[]
+}
+
+export type RagAskEvent =
+  | { type: 'sources'; sources: RagAskSources }
+  | { type: 'delta'; text: string }
+  | { type: 'done' }
+  | { type: 'error'; message: string }
+
+
+export interface DocumentRead {
+  id: number
+  title: string
+  source_filename: string | null
+  chunk_count: number
+  embedded_count: number
+  created_at: string
+}
+
+export interface DocumentDetail extends DocumentRead {
+  content: string
+}
+
+export interface DocumentListResponse {
+  items: DocumentRead[]
+  total: number
+}
+
+export interface DocumentUploadPayload {
+  title: string
+  content: string
+  source_filename?: string | null
+}
+
+
+export type FeihualingDifficulty = 'easy' | 'medium' | 'hard'
+
+export type FeihualingSessionStatus =
+  | 'in_progress'
+  | 'user_won'
+  | 'agent_won'
+  | 'abandoned'
+
+export type FeihualingSpeaker = 'user' | 'agent'
+
+export interface TurnRead {
+  turn_index: number
+  speaker: FeihualingSpeaker
+  line: string
+  poem_id: number | null
+  title: string | null
+  author: string | null
+  is_valid: boolean
+  reject_reason: string | null
+  latency_ms: number | null
+  llm_title: string | null
+  llm_author: string | null
+}
+
+export interface SessionRead {
+  session_id: number
+  target_char: string
+  difficulty: FeihualingDifficulty
+  status: FeihualingSessionStatus
+  winner_reason: string | null
+  started_at: string
+  ended_at: string | null
+  turns: TurnRead[]
+}
+
+export interface PlayResponse {
+  status: FeihualingSessionStatus
+  winner_reason: string | null
+  user_turn: TurnRead | null
+  agent_turn: TurnRead | null
+}
+
+export interface SessionSummary {
+  session_id: number
+  target_char: string
+  difficulty: FeihualingDifficulty
+  status: FeihualingSessionStatus
+  winner_reason: string | null
+  turn_count: number
+  started_at: string
+  ended_at: string | null
+}
+
+export interface SessionListResponse {
+  items: SessionSummary[]
+  total: number
+}
+
+
+export type FeihualingStreamEvent =
+  | {
+      type: 'session_created'
+      session_id: number
+      target_char: string
+      difficulty: FeihualingDifficulty
+    }
+  | { type: 'user_validating' }
+  | { type: 'user_result'; turn: TurnRead }
+  | { type: 'agent_thinking' }
+  | { type: 'agent_tool_call'; name: string; args: Record<string, unknown> }
+  | { type: 'agent_tool_result'; count: number; sample_lines: string[] }
+  | { type: 'agent_result'; turn: TurnRead }
+  | { type: 'agent_surrender'; reason: string }
+  | { type: 'agent_error'; message: string }
+  | { type: 'error'; message: string }
+  | {
+      type: 'done'
+      session_id: number
+      status: FeihualingSessionStatus
+      winner_reason: string | null
+    }

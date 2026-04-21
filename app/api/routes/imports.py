@@ -1,6 +1,6 @@
 from collections.abc import Iterable
 
-from fastapi import APIRouter
+from fastapi import APIRouter, BackgroundTasks
 
 from app.db.connection import get_connection
 from app.schemas.imports import (
@@ -11,6 +11,11 @@ from app.schemas.imports import (
     ImportAuthorInput,
     ImportCollectionInput,
     ImportPoemInput,
+)
+from app.services.embeddings import (
+    sync_author_embedding,
+    sync_collection_embedding,
+    sync_poem_embedding,
 )
 
 router = APIRouter()
@@ -163,7 +168,7 @@ def iter_collection_links(payload: BatchImportRequest) -> Iterable[tuple[str, st
     response_model=BatchImportResponse,
     summary="批量导入作者、诗词和合集",
 )
-def import_batch(payload: BatchImportRequest):
+def import_batch(payload: BatchImportRequest, background_tasks: BackgroundTasks):
     summary = BatchImportSummary()
     warnings: list[BatchImportWarning] = []
     author_inputs, collection_inputs, poem_inputs = build_import_inputs(payload, summary, warnings)
@@ -171,6 +176,9 @@ def import_batch(payload: BatchImportRequest):
     author_ids: dict[str, int] = {}
     collection_ids: dict[str, int] = {}
     poem_ids: dict[tuple[str, str], int] = {}
+    created_author_ids: list[int] = []
+    created_collection_ids: list[int] = []
+    created_poem_ids: list[int] = []
 
     with get_connection() as conn:
         try:
@@ -188,7 +196,9 @@ def import_batch(payload: BatchImportRequest):
                         "INSERT INTO authors (name, bio) VALUES (%s, %s) RETURNING id",
                         (author.name, author.bio),
                     )
-                    author_ids[author_key] = cur.fetchone()[0]
+                    new_id = cur.fetchone()[0]
+                    author_ids[author_key] = new_id
+                    created_author_ids.append(new_id)
                     summary.authors.created += 1
 
                 for collection_key, (collection, path) in collection_inputs.items():
@@ -204,7 +214,9 @@ def import_batch(payload: BatchImportRequest):
                         "INSERT INTO collections (name, description) VALUES (%s, %s) RETURNING id",
                         (collection.name, collection.description),
                     )
-                    collection_ids[collection_key] = cur.fetchone()[0]
+                    new_id = cur.fetchone()[0]
+                    collection_ids[collection_key] = new_id
+                    created_collection_ids.append(new_id)
                     summary.collections.created += 1
 
                 for poem_key, (poem, path) in poem_inputs.items():
@@ -223,7 +235,9 @@ def import_batch(payload: BatchImportRequest):
                         "INSERT INTO poems (title, author_id, content) VALUES (%s, %s, %s) RETURNING id",
                         (poem.title, author_id, poem.content),
                     )
-                    poem_ids[poem_key] = cur.fetchone()[0]
+                    new_id = cur.fetchone()[0]
+                    poem_ids[poem_key] = new_id
+                    created_poem_ids.append(new_id)
                     summary.poems.created += 1
 
                 seen_links: set[tuple[str, str, str]] = set()
@@ -267,5 +281,12 @@ def import_batch(payload: BatchImportRequest):
         except Exception:
             conn.rollback()
             raise
+
+    for aid in created_author_ids:
+        background_tasks.add_task(sync_author_embedding, aid)
+    for cid in created_collection_ids:
+        background_tasks.add_task(sync_collection_embedding, cid)
+    for pid in created_poem_ids:
+        background_tasks.add_task(sync_poem_embedding, pid)
 
     return BatchImportResponse(summary=summary, warnings=warnings)

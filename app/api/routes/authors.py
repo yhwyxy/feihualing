@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
 from app.db.connection import get_connection
 from app.schemas.author import (
@@ -9,6 +9,7 @@ from app.schemas.author import (
     AuthorUpdate,
 )
 from app.schemas.poem import MessageResponse, PoemListResponse, PoemRead
+from app.services.embeddings import sync_author_embedding
 
 router = APIRouter()
 
@@ -153,7 +154,7 @@ def get_author(author_id: int):
     response_model=AuthorRead,
     summary="新增作者",
 )
-def create_author(author: AuthorCreate):
+def create_author(author: AuthorCreate, background_tasks: BackgroundTasks):
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -167,6 +168,8 @@ def create_author(author: AuthorCreate):
             row = cur.fetchone()
         conn.commit()
 
+    background_tasks.add_task(sync_author_embedding, row[0])
+
     return serialize_author(row)
 
 
@@ -176,7 +179,7 @@ def create_author(author: AuthorCreate):
     response_model=AuthorRead,
     summary="更新作者",
 )
-def update_author(author_id: int, author: AuthorUpdate):
+def update_author(author_id: int, author: AuthorUpdate, background_tasks: BackgroundTasks):
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -194,6 +197,8 @@ def update_author(author_id: int, author: AuthorUpdate):
     if row is None:
         raise HTTPException(status_code=404, detail="Author not found")
 
+    background_tasks.add_task(sync_author_embedding, row[0])
+
     return serialize_author(row)
 
 
@@ -203,7 +208,7 @@ def update_author(author_id: int, author: AuthorUpdate):
     response_model=AuthorRead,
     summary="局部更新作者",
 )
-def patch_author(author_id: int, author: AuthorPatch):
+def patch_author(author_id: int, author: AuthorPatch, background_tasks: BackgroundTasks):
     update_data = author.model_dump(exclude_none=True)
 
     if not update_data:
@@ -228,6 +233,8 @@ def patch_author(author_id: int, author: AuthorPatch):
 
     if row is None:
         raise HTTPException(status_code=404, detail="Author not found")
+
+    background_tasks.add_task(sync_author_embedding, row[0])
 
     return serialize_author(row)
 
