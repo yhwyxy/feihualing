@@ -1,17 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChangeEvent, FormEvent, useEffect, useState } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 
 import { createAuthor, listAuthors } from '../api/authors'
 import { createCollection } from '../api/collections'
-import { importBatch } from '../api/imports'
 import { createPoem } from '../api/poems'
 import type {
   AuthorWritePayload,
-  BatchImportPayload,
-  BatchImportResponse,
   CollectionWritePayload,
-  ImportCollectionInput,
   PoemWritePayload,
 } from '../types/api'
 
@@ -57,149 +53,13 @@ const EMPTY_COLLECTION_FORM: CollectionWritePayload = {
   description: '',
 }
 
-const SAMPLE_IMPORT_PAYLOAD: BatchImportPayload = {
-  authors: [
-    {
-      name: '李白',
-      bio: '唐代诗人，字太白，号青莲居士。',
-    },
-  ],
-  poems: [
-    {
-      title: '静夜思',
-      author: '李白',
-      content: '床前明月光，\n疑是地上霜。\n举头望明月，\n低头思故乡。',
-      collections: ['唐诗精选', '思乡诗'],
-    },
-  ],
-  collections: [
-    {
-      name: '唐诗精选',
-      description: '收录常见唐诗名篇。',
-      poems: [
-        {
-          title: '静夜思',
-          author: '李白',
-        },
-      ],
-    },
-  ],
-}
-
-const MAX_IMPORT_FILE_SIZE = 50 * 1024 * 1024
-
-function parseCsv(text: string) {
-  const rows: string[][] = []
-  let row: string[] = []
-  let cell = ''
-  let inQuotes = false
-
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index]
-    const nextChar = text[index + 1]
-
-    if (char === '"') {
-      if (inQuotes && nextChar === '"') {
-        cell += '"'
-        index += 1
-      } else {
-        inQuotes = !inQuotes
-      }
-      continue
-    }
-
-    if (char === ',' && !inQuotes) {
-      row.push(cell)
-      cell = ''
-      continue
-    }
-
-    if ((char === '\n' || char === '\r') && !inQuotes) {
-      if (char === '\r' && nextChar === '\n') index += 1
-      row.push(cell)
-      if (row.some((value) => value.trim())) rows.push(row)
-      row = []
-      cell = ''
-      continue
-    }
-
-    cell += char
-  }
-
-  row.push(cell)
-  if (row.some((value) => value.trim())) rows.push(row)
-  return rows
-}
-
-function parseCsvImport(text: string): BatchImportPayload {
-  const rows = parseCsv(text)
-  const [headers, ...dataRows] = rows
-  if (!headers || dataRows.length === 0) {
-    throw new Error('CSV 至少需要标题行和一行数据')
-  }
-
-  const columnIndexes = new Map(headers.map((header, index) => [header.trim(), index]))
-  const getValue = (row: string[], key: string) => row[columnIndexes.get(key) ?? -1]?.trim() ?? ''
-  const authorMap = new Map<string, { name: string; bio: string | null }>()
-  const collectionMap = new Map<string, ImportCollectionInput>()
-  const poems: NonNullable<BatchImportPayload['poems']> = []
-
-  dataRows.forEach((row, index) => {
-    const title = getValue(row, 'title')
-    const author = getValue(row, 'author')
-    const content = getValue(row, 'content').replace(/\\n/g, '\n')
-    const authorBio = getValue(row, 'author_bio') || null
-    const collectionDescription = getValue(row, 'collection_description') || null
-    const collections = getValue(row, 'collections')
-      .split(';')
-      .map((item) => item.trim())
-      .filter(Boolean)
-
-    if (!title || !author || !content) {
-      throw new Error(`CSV 第 ${index + 2} 行必须包含 title、author、content`)
-    }
-
-    if (!authorMap.has(author)) {
-      authorMap.set(author, { name: author, bio: authorBio })
-    }
-
-    collections.forEach((name) => {
-      if (!collectionMap.has(name)) {
-        collectionMap.set(name, { name, description: collectionDescription, poems: [] })
-      }
-      collectionMap.get(name)?.poems?.push({ title, author })
-    })
-
-    poems.push({ title, author, content, collections })
-  })
-
-  return {
-    authors: Array.from(authorMap.values()),
-    poems,
-    collections: Array.from(collectionMap.values()),
-  }
-}
-
-function parseImportText(text: string): BatchImportPayload {
-  const value = JSON.parse(text) as BatchImportPayload
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('JSON 顶层必须是对象')
-  }
-  return value
-}
-
-function formatSummary(result: BatchImportResponse) {
-  const { summary } = result
-  return `导入完成：新增 ${summary.poems.created} 首诗词、${summary.authors.created} 位作者、${summary.collections.created} 个合集、${summary.collection_poems.created} 条收录关系。`
-}
-
 export function AppShell() {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const [actionMenuOpen, setActionMenuOpen] = useState(false)
   const [poemFormOpen, setPoemFormOpen] = useState(false)
   const [authorFormOpen, setAuthorFormOpen] = useState(false)
   const [collectionFormOpen, setCollectionFormOpen] = useState(false)
-  const [importFormOpen, setImportFormOpen] = useState(false)
   const [message, setMessage] = useState('')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === 'undefined') return false
@@ -216,9 +76,6 @@ export function AppShell() {
   const [poemFormData, setPoemFormData] = useState<PoemWritePayload>(EMPTY_POEM_FORM)
   const [authorFormData, setAuthorFormData] = useState<AuthorWritePayload>(EMPTY_AUTHOR_FORM)
   const [collectionFormData, setCollectionFormData] = useState<CollectionWritePayload>(EMPTY_COLLECTION_FORM)
-  const [importText, setImportText] = useState('')
-  const [importError, setImportError] = useState('')
-  const [importResult, setImportResult] = useState<BatchImportResponse | null>(null)
 
   const authorsQuery = useQuery({
     queryKey: ['authors-options'],
@@ -259,30 +116,10 @@ export function AppShell() {
     },
   })
 
-  const importBatchMutation = useMutation({
-    mutationFn: importBatch,
-    onSuccess: (result) => {
-      setImportResult(result)
-      setImportError('')
-      setMessage(formatSummary(result))
-      queryClient.invalidateQueries({ queryKey: ['poems'] })
-      queryClient.invalidateQueries({ queryKey: ['authors'] })
-      queryClient.invalidateQueries({ queryKey: ['authors-options'] })
-      queryClient.invalidateQueries({ queryKey: ['collections'] })
-      queryClient.invalidateQueries({ queryKey: ['author-poems'] })
-      queryClient.invalidateQueries({ queryKey: ['collection-poems'] })
-    },
-    onError: () => {
-      setImportResult(null)
-      setImportError('导入失败，请检查格式或后端服务。')
-    },
-  })
-
   const isSubmitting =
     createPoemMutation.isPending ||
     createAuthorMutation.isPending ||
-    createCollectionMutation.isPending ||
-    importBatchMutation.isPending
+    createCollectionMutation.isPending
 
   function openPoemForm() {
     setActionMenuOpen(false)
@@ -303,12 +140,10 @@ export function AppShell() {
     setCollectionFormOpen(true)
   }
 
-  function openImportForm() {
+  function openImportCenter() {
     setActionMenuOpen(false)
     setMessage('')
-    setImportError('')
-    setImportResult(null)
-    setImportFormOpen(true)
+    navigate('/workspace/documents')
   }
 
   function closePoemForm() {
@@ -324,58 +159,6 @@ export function AppShell() {
   function closeCollectionForm() {
     setCollectionFormOpen(false)
     setCollectionFormData(EMPTY_COLLECTION_FORM)
-  }
-
-  function closeImportForm() {
-    setImportFormOpen(false)
-    setImportText('')
-    setImportError('')
-    setImportResult(null)
-  }
-
-  function fillImportExample() {
-    setImportText(JSON.stringify(SAMPLE_IMPORT_PAYLOAD, null, 2))
-    setImportError('')
-    setImportResult(null)
-  }
-
-  async function handleImportFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (!file) return
-
-    if (file.size > MAX_IMPORT_FILE_SIZE) {
-      setImportResult(null)
-      setImportError('文件不能超过 50MB')
-      event.target.value = ''
-      return
-    }
-
-    try {
-      const text = await file.text()
-      const payload = file.name.toLowerCase().endsWith('.csv') ? parseCsvImport(text) : parseImportText(text)
-      setImportText(JSON.stringify(payload, null, 2))
-      setImportError('')
-      setImportResult(null)
-    } catch (error) {
-      setImportResult(null)
-      setImportError(error instanceof Error ? error.message : '文件解析失败')
-    } finally {
-      event.target.value = ''
-    }
-  }
-
-  function handleImportSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-
-    try {
-      const payload = parseImportText(importText)
-      setImportError('')
-      setImportResult(null)
-      importBatchMutation.mutate(payload)
-    } catch (error) {
-      setImportResult(null)
-      setImportError(error instanceof Error ? error.message : 'JSON 格式错误')
-    }
   }
 
   return (
@@ -430,8 +213,8 @@ export function AppShell() {
               <button type="button" onClick={openCollectionForm}>
                 添加合集
               </button>
-              <button type="button" onClick={openImportForm}>
-                批量导入
+              <button type="button" onClick={openImportCenter}>
+                导入资料
               </button>
             </div>
           ) : null}
@@ -637,83 +420,6 @@ export function AppShell() {
         </div>
       ) : null}
 
-      {importFormOpen ? (
-        <div className="modal-backdrop" role="presentation" onClick={closeImportForm}>
-          <div className="modal-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-header">
-              <div>
-                <h2>批量导入</h2>
-                <p>粘贴 JSON，或选择 .json / .csv 文件；文件会在浏览器中解析后提交。</p>
-              </div>
-              <button className="icon-button" type="button" aria-label="关闭" onClick={closeImportForm}>
-                ×
-              </button>
-            </div>
-
-            <form className="form-panel" onSubmit={handleImportSubmit}>
-              <label className="field">
-                <span>文件</span>
-                <input className="input" type="file" accept=".json,.csv" onChange={handleImportFileChange} />
-              </label>
-
-              <label className="field">
-                <span>导入 JSON</span>
-                <textarea
-                  className="input textarea import-textarea"
-                  value={importText}
-                  onChange={(event) => {
-                    setImportText(event.target.value)
-                    setImportError('')
-                    setImportResult(null)
-                  }}
-                  placeholder="粘贴批量导入 JSON，或选择 .json / .csv 文件自动填充"
-                  required
-                />
-              </label>
-
-              <p className="hint">
-                CSV 列名：title, author, content, collections, author_bio, collection_description；多个合集用英文分号分隔。
-              </p>
-
-              {importError ? <p className="hint danger-text">{importError}</p> : null}
-
-              {importResult ? (
-                <div className="import-result">
-                  <h3>导入结果</h3>
-                  <div className="import-summary-grid">
-                    <span>作者：新增 {importResult.summary.authors.created}，匹配 {importResult.summary.authors.matched}，跳过 {importResult.summary.authors.skipped}</span>
-                    <span>诗词：新增 {importResult.summary.poems.created}，匹配 {importResult.summary.poems.matched}，跳过 {importResult.summary.poems.skipped}</span>
-                    <span>合集：新增 {importResult.summary.collections.created}，匹配 {importResult.summary.collections.matched}，跳过 {importResult.summary.collections.skipped}</span>
-                    <span>收录：新增 {importResult.summary.collection_poems.created}，匹配 {importResult.summary.collection_poems.matched}，跳过 {importResult.summary.collection_poems.skipped}</span>
-                  </div>
-                  {importResult.warnings.length > 0 ? (
-                    <div className="warning-list">
-                      <p className="hint">提示</p>
-                      {importResult.warnings.map((warning, index) => (
-                        <p className="hint" key={`${warning.code}-${warning.path}-${index}`}>
-                          {warning.message}
-                        </p>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-
-              <div className="modal-actions">
-                <button className="button" type="button" onClick={fillImportExample}>
-                  填入示例
-                </button>
-                <button className="button button-primary" type="submit" disabled={isSubmitting || !importText.trim()}>
-                  开始导入
-                </button>
-                <button className="button" type="button" onClick={closeImportForm}>
-                  关闭
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      ) : null}
     </div>
   )
 }

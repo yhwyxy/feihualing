@@ -18,6 +18,21 @@ _LINE_SPLIT_RE = re.compile(r"[，。；！？、,.!?;\n\r]+")
 MIN_LINE_CHARS = 3
 MAX_LINE_CHARS = 40
 
+# 难度 -> Agent 可见诗库的最低 popularity_rank（1=偏僻, 5=顶流）
+DIFFICULTY_MIN_RANK: dict[str, int] = {
+    "easy": 4,       # 仅顶流（约 10% 诗库）
+    "medium": 3,     # 中等及以上（约 30%）
+    "hard": 1,       # 全库
+    "expert": 1,     # 全库 + 允许 Agent 引用库外（炼狱）
+}
+
+# expert 模式下允许 Agent 跳过工具、引用库外原句
+ALLOW_OUT_OF_LIBRARY = {"expert"}
+
+
+def difficulty_min_rank(difficulty: str) -> int:
+    return DIFFICULTY_MIN_RANK.get(difficulty, 1)
+
 
 def split_poem_lines(content: str) -> list[str]:
     lines: list[str] = []
@@ -34,6 +49,7 @@ def search_poems_by_char(
     exclude_poem_ids: list[int] | None = None,
     exclude_lines: list[str] | None = None,
     limit: int = 10,
+    min_rank: int | None = None,
 ) -> list[dict]:
     char = char.strip()
     if len(char) != 1:
@@ -41,20 +57,23 @@ def search_poems_by_char(
     exclude_poem_ids = exclude_poem_ids or []
     exclude_lines_set = {line.strip() for line in (exclude_lines or [])}
 
+    if min_rank is None:
+        min_rank = difficulty_min_rank(difficulty)
+
     sql = """
         SELECT p.id, p.title, COALESCE(a.name, '佚名'), p.content
         FROM poems p LEFT JOIN authors a ON a.id = p.author_id
-        WHERE p.content LIKE %s
+        WHERE p.content LIKE %s AND p.popularity_rank >= %s
     """
-    params: list = [f"%{char}%"]
+    params: list = [f"%{char}%", min_rank]
     if exclude_poem_ids:
         sql += " AND p.id <> ALL(%s)"
         params.append(exclude_poem_ids)
 
     if difficulty == "easy":
-        sql += " ORDER BY p.id ASC"
+        sql += " ORDER BY p.popularity_rank DESC, p.id ASC"
     elif difficulty == "hard":
-        sql += " ORDER BY p.id DESC"
+        sql += " ORDER BY p.popularity_rank ASC, p.id DESC"
     else:
         sql += " ORDER BY random()"
     sql += " LIMIT 100"
@@ -180,6 +199,34 @@ def validate_user_line(line: str, char: str) -> dict:
         "llm_title": llm_title if is_valid else None,
         "llm_author": llm_author if is_valid else None,
         "source": "llm",
+    }
+
+
+def fallback_pick_line(
+    target_char: str,
+    used_lines: list[str],
+    difficulty: str = "medium",
+) -> dict | None:
+    """Agent 彻底失败时的降级：直接 SQL 查含目标字的诗句，随机挑一条。
+    不经 LLM，保证 < 200ms 返回。无候选时返回 None。"""
+    try:
+        candidates = search_poems_by_char(
+            char=target_char,
+            difficulty=difficulty,
+            exclude_lines=used_lines,
+            limit=50,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("fallback_pick_line search failed: %s", exc)
+        return None
+    if not candidates:
+        return None
+    pick = random.choice(candidates)
+    return {
+        "line": pick["line"],
+        "poem_id": pick["poem_id"],
+        "title": pick["title"],
+        "author": pick["author"],
     }
 
 

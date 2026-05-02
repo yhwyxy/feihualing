@@ -119,6 +119,28 @@ export interface BatchImportResponse {
   warnings: BatchImportWarning[]
 }
 
+export interface UnifiedImportPayload {
+  title: string
+  content: string
+  source_filename?: string | null
+  batch_payload?: BatchImportPayload | null
+  extract_poems?: boolean
+  max_extracted_poems?: number
+}
+
+export interface UnifiedImportExtractionResult {
+  attempted: boolean
+  source: 'batch_payload' | 'llm' | 'skipped' | 'unavailable' | 'failed'
+  extracted_poem_count: number
+  imported: BatchImportResponse | null
+  warnings: BatchImportWarning[]
+}
+
+export interface UnifiedImportResponse {
+  document: DocumentRead
+  extraction: UnifiedImportExtractionResult
+}
+
 
 export interface RagSearchRequest {
   query: string
@@ -225,7 +247,7 @@ export interface DocumentUploadPayload {
 }
 
 
-export type FeihualingDifficulty = 'easy' | 'medium' | 'hard'
+export type FeihualingDifficulty = 'easy' | 'medium' | 'hard' | 'expert'
 
 export type FeihualingSessionStatus =
   | 'in_progress'
@@ -296,9 +318,10 @@ export type FeihualingStreamEvent =
   | { type: 'agent_thinking' }
   | { type: 'agent_tool_call'; name: string; args: Record<string, unknown> }
   | { type: 'agent_tool_result'; count: number; sample_lines: string[] }
-  | { type: 'agent_result'; turn: TurnRead }
+  | { type: 'agent_result'; turn: TurnRead; source?: 'agent' | 'fallback' | null }
   | { type: 'agent_surrender'; reason: string }
   | { type: 'agent_error'; message: string }
+  | { type: 'agent_fallback_started'; reason: string }
   | { type: 'error'; message: string }
   | {
       type: 'done'

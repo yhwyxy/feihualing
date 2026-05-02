@@ -20,6 +20,7 @@ from app.schemas.feihualing import (
 from app.schemas.poem import MessageResponse
 from app.services.feihualing_agent import agent_pick_line_stream
 from app.services.feihualing_tools import (
+    fallback_pick_line,
     get_session_state,
     validate_user_line,
 )
@@ -82,6 +83,50 @@ def _end_session(session_id: int, status: str, reason: str) -> None:
         conn.commit()
 
 
+def _run_agent_with_fallback(target_char: str, difficulty: str,
+                              used_lines: list[str]) -> Iterator[dict]:
+    """消费 agent_pick_line_stream，失败或无有效句子时切换到 fallback_pick_line。
+
+    对外 yield 的事件：
+      - 正常 agent 事件（agent_thinking / agent_tool_call / agent_tool_result / agent_error）
+      - agent_fallback_started：进入降级通道（带 reason）
+      - _final（内部事件）：{"pick": dict | None, "source": "agent" | "fallback" | None}
+    调用方在收到 _final 后停止转发，并据此写 DB / 结束对局。
+    """
+    agent_pick: dict | None = None
+    agent_failed_reason: str | None = None
+
+    for event in agent_pick_line_stream(target_char, difficulty, used_lines):
+        etype = event.get("type")
+        if etype == "agent_final":
+            data = event.get("data") or {}
+            if data.get("line") and data["line"] not in used_lines:
+                agent_pick = data
+            else:
+                agent_failed_reason = data.get("reason") or "Agent 未给出有效句子"
+            continue
+        if etype == "agent_error":
+            agent_failed_reason = event.get("message") or "Agent 异常"
+            yield event
+            break
+        yield event
+
+    if agent_pick is not None:
+        yield {"type": "_final", "pick": agent_pick, "source": "agent"}
+        return
+
+    yield {
+        "type": "agent_fallback_started",
+        "reason": agent_failed_reason or "Agent 未给出有效句子",
+    }
+    pick = fallback_pick_line(target_char, used_lines, difficulty)
+    if pick:
+        yield {"type": "_final", "pick": pick, "source": "fallback"}
+        return
+
+    yield {"type": "_final", "pick": None, "source": None}
+
+
 def _to_turn_read(turn: dict) -> TurnRead:
     title, author = _ensure_poem_title(turn.get("poem_id"))
     return TurnRead(
@@ -137,27 +182,19 @@ def _stream_start(char: str, difficulty: str) -> Iterator[bytes]:
     })
 
     started = time.perf_counter()
-    final: dict | None = None
-    for event in agent_pick_line_stream(char, difficulty, used_lines=[]):
-        if event.get("type") == "agent_final":
-            final = event.get("data")
+    final_pick: dict | None = None
+    source: str | None = None
+    for event in _run_agent_with_fallback(char, difficulty, used_lines=[]):
+        if event.get("type") == "_final":
+            final_pick = event.get("pick")
+            source = event.get("source")
             continue
-        if event.get("type") == "agent_error":
-            _end_session(session_id, "abandoned", event.get("message", "Agent 失败"))
-            yield _sse(event)
-            yield _sse({
-                "type": "done",
-                "session_id": session_id,
-                "status": "abandoned",
-                "winner_reason": event.get("message"),
-            })
-            return
         yield _sse(event)
 
     latency_ms = int((time.perf_counter() - started) * 1000)
 
-    if not final or not final.get("line"):
-        reason = (final or {}).get("reason") or "Agent 开局认输"
+    if not final_pick:
+        reason = "知识库中无合适诗句，Agent 开局认输"
         _end_session(session_id, "user_won", reason)
         yield _sse({"type": "agent_surrender", "reason": reason})
         yield _sse({
@@ -168,25 +205,36 @@ def _stream_start(char: str, difficulty: str) -> Iterator[bytes]:
         })
         return
 
+    agent_poem_id = final_pick.get("poem_id")
+    agent_llm_title = final_pick.get("title") if agent_poem_id is None else None
+    agent_llm_author = final_pick.get("author") if agent_poem_id is None else None
     _insert_turn(
         session_id=session_id,
         turn_index=0,
         speaker="agent",
-        line=final["line"],
-        poem_id=final.get("poem_id"),
+        line=final_pick["line"],
+        poem_id=agent_poem_id,
         is_valid=True,
         reject_reason=None,
         latency_ms=latency_ms,
+        llm_title=agent_llm_title,
+        llm_author=agent_llm_author,
     )
     turn = _to_turn_read({
         "turn_index": 0,
         "speaker": "agent",
-        "line": final["line"],
-        "poem_id": final.get("poem_id"),
+        "line": final_pick["line"],
+        "poem_id": agent_poem_id,
         "is_valid": True,
         "latency_ms": latency_ms,
+        "llm_title": agent_llm_title,
+        "llm_author": agent_llm_author,
     })
-    yield _sse({"type": "agent_result", "turn": turn.model_dump(mode="json")})
+    yield _sse({
+        "type": "agent_result",
+        "turn": turn.model_dump(mode="json"),
+        "source": source,
+    })
     yield _sse({
         "type": "done",
         "session_id": session_id,
@@ -282,27 +330,19 @@ def _stream_turn(session_id: int, line: str) -> Iterator[bytes]:
     agent_turn_index = next_turn_index + 1
 
     started = time.perf_counter()
-    final: dict | None = None
-    for event in agent_pick_line_stream(target_char, difficulty, used_lines):
-        if event.get("type") == "agent_final":
-            final = event.get("data")
+    final_pick: dict | None = None
+    source: str | None = None
+    for event in _run_agent_with_fallback(target_char, difficulty, used_lines):
+        if event.get("type") == "_final":
+            final_pick = event.get("pick")
+            source = event.get("source")
             continue
-        if event.get("type") == "agent_error":
-            _end_session(session_id, "user_won", event.get("message", "Agent 失败"))
-            yield _sse(event)
-            yield _sse({
-                "type": "done",
-                "session_id": session_id,
-                "status": "user_won",
-                "winner_reason": event.get("message"),
-            })
-            return
         yield _sse(event)
 
     agent_latency = int((time.perf_counter() - started) * 1000)
 
-    if not final or not final.get("line"):
-        reason = (final or {}).get("reason") or "Agent 找不到合适诗句，认输"
+    if not final_pick:
+        reason = "Agent 与兜底检索均无结果，认输"
         _end_session(session_id, "user_won", reason)
         yield _sse({"type": "agent_surrender", "reason": reason})
         yield _sse({
@@ -313,35 +353,33 @@ def _stream_turn(session_id: int, line: str) -> Iterator[bytes]:
         })
         return
 
-    agent_line = final["line"]
-    if agent_line in used_lines:
-        reason = f"Agent 选了重复句「{agent_line}」，自动认输"
-        _end_session(session_id, "user_won", reason)
-        yield _sse({"type": "agent_surrender", "reason": reason})
-        yield _sse({
-            "type": "done",
-            "session_id": session_id,
-            "status": "user_won",
-            "winner_reason": reason,
-        })
-        return
-
+    agent_line = final_pick["line"]
+    agent_poem_id = final_pick.get("poem_id")
+    agent_llm_title = final_pick.get("title") if agent_poem_id is None else None
+    agent_llm_author = final_pick.get("author") if agent_poem_id is None else None
     _insert_turn(
         session_id=session_id,
         turn_index=agent_turn_index,
         speaker="agent",
         line=agent_line,
-        poem_id=final.get("poem_id"),
+        poem_id=agent_poem_id,
         is_valid=True,
         reject_reason=None,
         latency_ms=agent_latency,
+        llm_title=agent_llm_title,
+        llm_author=agent_llm_author,
     )
     agent_turn_read = _to_turn_read({
         "turn_index": agent_turn_index, "speaker": "agent",
-        "line": agent_line, "poem_id": final.get("poem_id"),
+        "line": agent_line, "poem_id": agent_poem_id,
         "is_valid": True, "latency_ms": agent_latency,
+        "llm_title": agent_llm_title, "llm_author": agent_llm_author,
     })
-    yield _sse({"type": "agent_result", "turn": agent_turn_read.model_dump(mode="json")})
+    yield _sse({
+        "type": "agent_result",
+        "turn": agent_turn_read.model_dump(mode="json"),
+        "source": source,
+    })
     yield _sse({
         "type": "done",
         "session_id": session_id,

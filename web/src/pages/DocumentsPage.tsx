@@ -4,12 +4,16 @@ import { ChangeEvent, FormEvent, useState } from 'react'
 import {
   deleteDocument,
   listDocuments,
-  uploadDocument,
 } from '../shared/api/documents'
 import { ApiError } from '../shared/api/http'
-import type { DocumentUploadPayload } from '../shared/types/api'
+import { importUnified, importUnifiedFile } from '../shared/api/imports'
+import { parseCsvImport, parseImportText } from '../shared/lib/importParsing'
+import type { BatchImportResponse, UnifiedImportPayload, UnifiedImportResponse } from '../shared/types/api'
 
-const MAX_FILE_SIZE = 5 * 1024 * 1024
+const MAX_FILE_SIZE = 50 * 1024 * 1024
+const STRUCTURED_EXTENSIONS = new Set(['json', 'csv'])
+const SERVER_FILE_EXTENSIONS = new Set(['pdf'])
+const TEXT_EXTENSIONS = new Set(['txt', 'md', 'markdown'])
 
 function formatDate(iso: string) {
   try {
@@ -19,14 +23,40 @@ function formatDate(iso: string) {
   }
 }
 
+function formatImportSummary(result: BatchImportResponse | null) {
+  if (!result) return '无结构化诗词入库'
+  const { summary } = result
+  return `新增 ${summary.poems.created} 首 / 匹配 ${summary.poems.matched} 首；作者新增 ${summary.authors.created} 位；合集新增 ${summary.collections.created} 个；收录关系新增 ${summary.collection_poems.created} 条。`
+}
+
+function extractionSourceLabel(source: UnifiedImportResponse['extraction']['source']) {
+  switch (source) {
+    case 'batch_payload':
+      return '结构化文件'
+    case 'llm':
+      return 'AI 自动识别'
+    case 'skipped':
+      return '已跳过识别'
+    case 'unavailable':
+      return 'LLM 未配置'
+    case 'failed':
+      return '识别失败'
+    default:
+      return source
+  }
+}
+
 export function DocumentsPage() {
   const queryClient = useQueryClient()
 
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
   const [sourceFilename, setSourceFilename] = useState<string>('')
+  const [batchPayload, setBatchPayload] = useState<UnifiedImportPayload['batch_payload']>(null)
+  const [serverFile, setServerFile] = useState<File | null>(null)
+  const [extractPoems, setExtractPoems] = useState(true)
   const [errorMessage, setErrorMessage] = useState('')
-  const [successMessage, setSuccessMessage] = useState('')
+  const [successResult, setSuccessResult] = useState<UnifiedImportResponse | null>(null)
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['documents'],
@@ -34,25 +64,129 @@ export function DocumentsPage() {
     refetchInterval: 5000,
   })
 
-  const uploadMutation = useMutation({
-    mutationFn: uploadDocument,
-    onSuccess: (doc) => {
-      setSuccessMessage(`《${doc.title}》已上传，共 ${doc.chunk_count} 个片段，正在后台向量化…`)
-      setErrorMessage('')
-      setTitle('')
-      setContent('')
-      setSourceFilename('')
-      queryClient.invalidateQueries({ queryKey: ['documents'] })
-    },
+  const resetForm = () => {
+    setTitle('')
+    setContent('')
+    setSourceFilename('')
+    setBatchPayload(null)
+    setServerFile(null)
+  }
+
+  const onUnifiedSuccess = (result: UnifiedImportResponse) => {
+    setSuccessResult(result)
+    setErrorMessage('')
+    resetForm()
+    queryClient.invalidateQueries({ queryKey: ['documents'] })
+    queryClient.invalidateQueries({ queryKey: ['poems'] })
+    queryClient.invalidateQueries({ queryKey: ['authors'] })
+    queryClient.invalidateQueries({ queryKey: ['authors-options'] })
+    queryClient.invalidateQueries({ queryKey: ['collections'] })
+    queryClient.invalidateQueries({ queryKey: ['author-poems'] })
+    queryClient.invalidateQueries({ queryKey: ['collection-poems'] })
+  }
+
+  const unifiedMutation = useMutation({
+    mutationFn: importUnified,
+    onSuccess: onUnifiedSuccess,
     onError: (error) => {
-      setSuccessMessage('')
-      if (error instanceof ApiError) {
-        setErrorMessage(error.message)
-      } else {
-        setErrorMessage('上传失败，请稍后重试。')
-      }
+      setSuccessResult(null)
+      setErrorMessage(error instanceof ApiError ? error.message : '导入失败，请稍后重试。')
     },
   })
+
+  const unifiedFileMutation = useMutation({
+    mutationFn: importUnifiedFile,
+    onSuccess: onUnifiedSuccess,
+    onError: (error) => {
+      setSuccessResult(null)
+      setErrorMessage(error instanceof ApiError ? error.message : '文件导入失败，请稍后重试。')
+    },
+  })
+
+  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    if (file.size > MAX_FILE_SIZE) {
+      setErrorMessage(`文件过大（>${Math.round(MAX_FILE_SIZE / 1024 / 1024)} MB）`)
+      return
+    }
+
+    const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
+    if (!TEXT_EXTENSIONS.has(ext) && !STRUCTURED_EXTENSIONS.has(ext) && !SERVER_FILE_EXTENSIONS.has(ext)) {
+      setErrorMessage('仅支持 .txt / .md / .markdown / .json / .csv / .pdf 文件')
+      return
+    }
+
+    setSuccessResult(null)
+    setBatchPayload(null)
+    setServerFile(null)
+    setSourceFilename(file.name)
+    if (!title.trim()) {
+      setTitle(file.name.replace(/\.(txt|md|markdown|json|csv|pdf)$/i, ''))
+    }
+
+    if (SERVER_FILE_EXTENSIONS.has(ext)) {
+      setContent('')
+      setServerFile(file)
+      setErrorMessage('')
+      return
+    }
+
+    try {
+      const text = await file.text()
+      setContent(text)
+      if (ext === 'json') {
+        setBatchPayload(parseImportText(text))
+      } else if (ext === 'csv') {
+        setBatchPayload(parseCsvImport(text))
+      }
+      setErrorMessage('')
+    } catch (error) {
+      setBatchPayload(null)
+      setErrorMessage(error instanceof Error ? error.message : '读取文件失败')
+    }
+  }
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const trimmedTitle = title.trim()
+    if (!trimmedTitle) {
+      setErrorMessage('请填写标题')
+      return
+    }
+
+    if (serverFile) {
+      const formData = new FormData()
+      formData.append('file', serverFile)
+      formData.append('title', trimmedTitle)
+      formData.append('extract_poems', String(extractPoems))
+      formData.append('max_extracted_poems', '80')
+      unifiedFileMutation.mutate(formData)
+      return
+    }
+
+    const trimmedContent = content.trim()
+    if (!trimmedContent) {
+      setErrorMessage('请粘贴或上传资料内容')
+      return
+    }
+
+    const payload: UnifiedImportPayload = {
+      title: trimmedTitle,
+      content: trimmedContent,
+      source_filename: sourceFilename || null,
+      batch_payload: batchPayload,
+      extract_poems: extractPoems,
+      max_extracted_poems: 80,
+    }
+    unifiedMutation.mutate(payload)
+  }
+
+  const handleDelete = (id: number, title: string) => {
+    if (!confirm(`确定删除《${title}》？对应的所有向量片段也会一起删除。`)) return
+    deleteMutation.mutate(id)
+  }
 
   const deleteMutation = useMutation({
     mutationFn: deleteDocument,
@@ -68,68 +202,19 @@ export function DocumentsPage() {
     },
   })
 
-  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file) return
-    if (file.size > MAX_FILE_SIZE) {
-      setErrorMessage(`文件过大（>${Math.round(MAX_FILE_SIZE / 1024 / 1024)} MB）`)
-      return
-    }
-    const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
-    if (ext !== 'txt' && ext !== 'md' && ext !== 'markdown') {
-      setErrorMessage('仅支持 .txt / .md 文件')
-      return
-    }
-    try {
-      const text = await file.text()
-      setContent(text)
-      setSourceFilename(file.name)
-      if (!title.trim()) {
-        setTitle(file.name.replace(/\.(txt|md|markdown)$/i, ''))
-      }
-      setErrorMessage('')
-    } catch {
-      setErrorMessage('读取文件失败')
-    }
-  }
-
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const trimmedTitle = title.trim()
-    const trimmedContent = content.trim()
-    if (!trimmedTitle) {
-      setErrorMessage('请填写文档标题')
-      return
-    }
-    if (!trimmedContent) {
-      setErrorMessage('请粘贴或上传文档内容')
-      return
-    }
-    const payload: DocumentUploadPayload = {
-      title: trimmedTitle,
-      content: trimmedContent,
-      source_filename: sourceFilename || null,
-    }
-    uploadMutation.mutate(payload)
-  }
-
-  const handleDelete = (id: number, title: string) => {
-    if (!confirm(`确定删除《${title}》？对应的所有向量片段也会一起删除。`)) return
-    deleteMutation.mutate(id)
-  }
+  const pending = unifiedMutation.isPending || unifiedFileMutation.isPending
 
   return (
     <div className="documents-page">
       <header className="documents-header">
-        <h1>文档库</h1>
+        <h1>导入中心</h1>
         <p className="documents-subtitle">
-          上传 txt / md 长文档，自动切分 + 向量化，供 RAG 搜索和问答引用。
+          所有资料都会进入 RAG 文档库并向量化；系统会自动识别诗词，成功后同步写入诗词库。
         </p>
       </header>
 
       <section className="documents-upload">
-        <h2>上传新文档</h2>
+        <h2>导入资料</h2>
         <form className="documents-upload-form" onSubmit={handleSubmit}>
           <label className="documents-field">
             <span>标题</span>
@@ -137,24 +222,39 @@ export function DocumentsPage() {
               type="text"
               value={title}
               onChange={(event) => setTitle(event.target.value)}
-              placeholder="例如：李白评传"
+              placeholder="例如：唐诗三百首"
               maxLength={200}
+            />
+          </label>
+
+          <label className="documents-field documents-switch-row">
+            <span>
+              自动识别诗词
+              <span className="documents-hint"> （关闭后只进入 RAG，不写入诗词库）</span>
+            </span>
+            <input
+              type="checkbox"
+              checked={extractPoems}
+              onChange={(event) => setExtractPoems(event.target.checked)}
             />
           </label>
 
           <label className="documents-field">
             <span>
               内容
-              <span className="documents-hint">
-                {' '}
-                （粘贴文本，或从右侧选文件）
-              </span>
+              <span className="documents-hint"> （粘贴文本，或选择文件）</span>
             </span>
             <textarea
               className="documents-textarea"
-              value={content}
-              onChange={(event) => setContent(event.target.value)}
-              placeholder="粘贴长文内容，支持中文段落（按 \n\n 自动切分）"
+              value={serverFile ? `已选择 PDF：${serverFile.name}（内容由后端解析）` : content}
+              onChange={(event) => {
+                setServerFile(null)
+                setSourceFilename('')
+                setBatchPayload(null)
+                setContent(event.target.value)
+              }}
+              disabled={Boolean(serverFile)}
+              placeholder="粘贴 txt / md 内容；JSON/CSV 文件会自动识别为结构化导入；PDF 将由后端提取文本。"
             />
           </label>
 
@@ -162,33 +262,51 @@ export function DocumentsPage() {
             <label className="documents-file-pick">
               <input
                 type="file"
-                accept=".txt,.md,.markdown,text/plain,text/markdown"
+                accept=".txt,.md,.markdown,.json,.csv,.pdf,text/plain,text/markdown,application/json,text/csv,application/pdf"
                 onChange={handleFileChange}
                 hidden
               />
-              <span>选择 .txt / .md 文件</span>
+              <span>选择资料文件</span>
             </label>
             {sourceFilename ? (
-              <span className="documents-file-hint">已读取：{sourceFilename}</span>
+              <span className="documents-file-hint">
+                已读取：{sourceFilename}{batchPayload ? ' · 结构化诗词导入' : serverFile ? ' · PDF 服务端解析' : ''}
+              </span>
             ) : null}
             <div className="documents-upload-spacer" />
             <button
               type="submit"
               className="documents-upload-submit"
-              disabled={uploadMutation.isPending}
+              disabled={pending}
             >
-              {uploadMutation.isPending ? '上传中…' : '上传并向量化'}
+              {pending ? '导入中…' : '导入并处理'}
             </button>
           </div>
 
           {errorMessage ? <div className="documents-error">{errorMessage}</div> : null}
-          {successMessage ? <div className="documents-success">{successMessage}</div> : null}
+          {successResult ? (
+            <div className="documents-success">
+              <strong>《{successResult.document.title}》已导入</strong>
+              <p>{successResult.document.chunk_count} 个 RAG 片段，后台向量化中。</p>
+              <p>
+                诗词识别：{extractionSourceLabel(successResult.extraction.source)}；识别 {successResult.extraction.extracted_poem_count} 首。
+              </p>
+              <p>{formatImportSummary(successResult.extraction.imported)}</p>
+              {successResult.extraction.warnings.length ? (
+                <ul className="documents-warning-list">
+                  {successResult.extraction.warnings.map((warning, index) => (
+                    <li key={`${warning.code}-${index}`}>{warning.message}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
         </form>
       </section>
 
       <section className="documents-list-section">
         <h2>
-          已上传文档
+          RAG 文档库
           {data ? <span className="documents-count">（{data.total}）</span> : null}
         </h2>
         {isLoading ? (
@@ -235,7 +353,7 @@ export function DocumentsPage() {
             })}
           </div>
         ) : (
-          <div className="documents-empty">还没有上传过文档。</div>
+          <div className="documents-empty">还没有导入过资料。</div>
         )}
       </section>
     </div>

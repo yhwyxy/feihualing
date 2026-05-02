@@ -1,165 +1,46 @@
-from collections.abc import Iterable
+from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks
+import io
+import json
 
-from app.db.connection import get_connection
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
+from pydantic import ValidationError
+from pypdf import PdfReader
+
+from app.core.config import settings
 from app.schemas.imports import (
     BatchImportRequest,
     BatchImportResponse,
     BatchImportSummary,
     BatchImportWarning,
-    ImportAuthorInput,
-    ImportCollectionInput,
-    ImportPoemInput,
+    UnifiedImportExtractionResult,
+    UnifiedImportRequest,
+    UnifiedImportResponse,
 )
+from app.services.documents import create_document, load_document, sync_document_embeddings
 from app.services.embeddings import (
     sync_author_embedding,
     sync_collection_embedding,
     sync_poem_embedding,
 )
+from app.services.imports import BatchImportOutcome, import_batch_payload
+from app.services.poem_extraction import extract_poems_from_text
 
 router = APIRouter()
 
-
-def normalize_key(value: str) -> str:
-    return " ".join(value.strip().split())
-
-
-def add_warning(warnings: list[BatchImportWarning], code: str, path: str, message: str):
-    warnings.append(BatchImportWarning(code=code, path=path, message=message))
+MAX_UNIFIED_FILE_SIZE = 50 * 1024 * 1024
+TEXT_EXTENSIONS = {"txt", "md", "markdown"}
+STRUCTURED_EXTENSIONS = {"json"}
+PDF_EXTENSIONS = {"pdf"}
 
 
-def add_author_input(
-    author_inputs: dict[str, tuple[ImportAuthorInput, str]],
-    summary: BatchImportSummary,
-    warnings: list[BatchImportWarning],
-    author: ImportAuthorInput,
-    path: str,
-    count_duplicate: bool,
-):
-    key = normalize_key(author.name)
-    if key in author_inputs:
-        if count_duplicate:
-            summary.authors.skipped += 1
-            add_warning(warnings, "duplicate_author_in_payload", path, f"作者“{author.name}”重复，已跳过后续项。")
-        return
-
-    author_inputs[key] = (author, path)
-
-
-def add_collection_input(
-    collection_inputs: dict[str, tuple[ImportCollectionInput, str]],
-    summary: BatchImportSummary,
-    warnings: list[BatchImportWarning],
-    collection: ImportCollectionInput,
-    path: str,
-    count_duplicate: bool,
-):
-    key = normalize_key(collection.name)
-    if key in collection_inputs:
-        if count_duplicate:
-            summary.collections.skipped += 1
-            add_warning(warnings, "duplicate_collection_in_payload", path, f"合集“{collection.name}”重复，已跳过后续项。")
-        return
-
-    collection_inputs[key] = (collection, path)
-
-
-def find_author_id(cur, name: str) -> tuple[int | None, int]:
-    cur.execute(
-        "SELECT id FROM authors WHERE btrim(name) = %s ORDER BY id ASC",
-        (name,),
-    )
-    rows = cur.fetchall()
-    if not rows:
-        return None, 0
-    return rows[0][0], len(rows)
-
-
-def find_collection_id(cur, name: str) -> tuple[int | None, int]:
-    cur.execute(
-        "SELECT id FROM collections WHERE btrim(name) = %s ORDER BY id ASC",
-        (name,),
-    )
-    rows = cur.fetchall()
-    if not rows:
-        return None, 0
-    return rows[0][0], len(rows)
-
-
-def find_poem(cur, title: str, author_id: int) -> tuple[tuple[int, str] | None, int]:
-    cur.execute(
-        "SELECT id, content FROM poems WHERE btrim(title) = %s AND author_id = %s ORDER BY id ASC",
-        (title, author_id),
-    )
-    rows = cur.fetchall()
-    if not rows:
-        return None, 0
-    return rows[0], len(rows)
-
-
-def build_import_inputs(payload: BatchImportRequest, summary: BatchImportSummary, warnings: list[BatchImportWarning]):
-    author_inputs: dict[str, tuple[ImportAuthorInput, str]] = {}
-    collection_inputs: dict[str, tuple[ImportCollectionInput, str]] = {}
-    poem_inputs: dict[tuple[str, str], tuple[ImportPoemInput, str]] = {}
-
-    for index, author in enumerate(payload.authors):
-        add_author_input(author_inputs, summary, warnings, author, f"authors[{index}]", True)
-
-    for index, collection in enumerate(payload.collections):
-        add_collection_input(collection_inputs, summary, warnings, collection, f"collections[{index}]", True)
-        for poem_index, poem in enumerate(collection.poems):
-            add_author_input(
-                author_inputs,
-                summary,
-                warnings,
-                ImportAuthorInput(name=poem.author),
-                f"collections[{index}].poems[{poem_index}].author",
-                False,
-            )
-
-    for index, poem in enumerate(payload.poems):
-        author_key = normalize_key(poem.author)
-        add_author_input(author_inputs, summary, warnings, ImportAuthorInput(name=poem.author), f"poems[{index}].author", False)
-
-        poem_key = (normalize_key(poem.title), author_key)
-        if poem_key in poem_inputs:
-            summary.poems.skipped += 1
-            add_warning(warnings, "duplicate_poem_in_payload", f"poems[{index}]", f"诗词“{poem.title} / {poem.author}”重复，已跳过后续项。")
-        else:
-            poem_inputs[poem_key] = (poem, f"poems[{index}]")
-
-        for collection_index, collection_name in enumerate(poem.collections):
-            add_collection_input(
-                collection_inputs,
-                summary,
-                warnings,
-                ImportCollectionInput(name=collection_name),
-                f"poems[{index}].collections[{collection_index}]",
-                False,
-            )
-
-    return author_inputs, collection_inputs, poem_inputs
-
-
-def iter_collection_links(payload: BatchImportRequest) -> Iterable[tuple[str, str, str, str]]:
-    for poem_index, poem in enumerate(payload.poems):
-        for collection_index, collection_name in enumerate(poem.collections):
-            yield (
-                normalize_key(collection_name),
-                normalize_key(poem.title),
-                normalize_key(poem.author),
-                f"poems[{poem_index}].collections[{collection_index}]",
-            )
-
-    for collection_index, collection in enumerate(payload.collections):
-        for poem_index, poem in enumerate(collection.poems):
-            yield (
-                normalize_key(collection.name),
-                normalize_key(poem.title),
-                normalize_key(poem.author),
-                f"collections[{collection_index}].poems[{poem_index}]",
-            )
+def schedule_import_embeddings(outcome: BatchImportOutcome, background_tasks: BackgroundTasks) -> None:
+    for aid in outcome.created_author_ids:
+        background_tasks.add_task(sync_author_embedding, aid)
+    for cid in outcome.created_collection_ids:
+        background_tasks.add_task(sync_collection_embedding, cid)
+    for pid in outcome.created_poem_ids:
+        background_tasks.add_task(sync_poem_embedding, pid)
 
 
 @router.post(
@@ -169,124 +50,180 @@ def iter_collection_links(payload: BatchImportRequest) -> Iterable[tuple[str, st
     summary="批量导入作者、诗词和合集",
 )
 def import_batch(payload: BatchImportRequest, background_tasks: BackgroundTasks):
-    summary = BatchImportSummary()
-    warnings: list[BatchImportWarning] = []
-    author_inputs, collection_inputs, poem_inputs = build_import_inputs(payload, summary, warnings)
+    outcome = import_batch_payload(payload)
+    schedule_import_embeddings(outcome, background_tasks)
+    return outcome.response
 
-    author_ids: dict[str, int] = {}
-    collection_ids: dict[str, int] = {}
-    poem_ids: dict[tuple[str, str], int] = {}
-    created_author_ids: list[int] = []
-    created_collection_ids: list[int] = []
-    created_poem_ids: list[int] = []
 
-    with get_connection() as conn:
+def _import_structured_payload(payload: BatchImportRequest, background_tasks: BackgroundTasks) -> UnifiedImportExtractionResult:
+    outcome = import_batch_payload(payload)
+    schedule_import_embeddings(outcome, background_tasks)
+    return UnifiedImportExtractionResult(
+        attempted=True,
+        source="batch_payload",
+        extracted_poem_count=len(payload.poems),
+        imported=outcome.response,
+        warnings=outcome.response.warnings,
+    )
+
+
+def _extract_and_import(payload: UnifiedImportRequest, background_tasks: BackgroundTasks) -> UnifiedImportExtractionResult:
+    if payload.batch_payload is not None:
+        return _import_structured_payload(payload.batch_payload, background_tasks)
+
+    if not payload.extract_poems:
+        return UnifiedImportExtractionResult(attempted=False, source="skipped")
+
+    if not settings.dashscope_api_key:
+        return UnifiedImportExtractionResult(
+            attempted=True,
+            source="unavailable",
+            warnings=[BatchImportWarning(
+                code="llm_unavailable",
+                path="dashscope_api_key",
+                message="未配置 DashScope API Key，已仅导入 RAG 文档。",
+            )],
+        )
+
+    extracted_payload, extraction_warnings = extract_poems_from_text(
+        title=payload.title,
+        content=payload.content,
+        source_filename=payload.source_filename,
+        max_poems=payload.max_extracted_poems,
+    )
+    if not extracted_payload.poems:
+        return UnifiedImportExtractionResult(
+            attempted=True,
+            source="llm",
+            extracted_poem_count=0,
+            imported=BatchImportResponse(summary=BatchImportSummary()),
+            warnings=extraction_warnings,
+        )
+
+    outcome = import_batch_payload(extracted_payload)
+    schedule_import_embeddings(outcome, background_tasks)
+    return UnifiedImportExtractionResult(
+        attempted=True,
+        source="llm",
+        extracted_poem_count=len(extracted_payload.poems),
+        imported=outcome.response,
+        warnings=[*extraction_warnings, *outcome.response.warnings],
+    )
+
+
+def _run_unified_import(payload: UnifiedImportRequest, background_tasks: BackgroundTasks) -> UnifiedImportResponse:
+    try:
+        document_id, _ = create_document(
+            title=payload.title,
+            content=payload.content,
+            source_filename=payload.source_filename,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    background_tasks.add_task(sync_document_embeddings, document_id)
+    document = load_document(document_id)
+    if document is None:
+        raise HTTPException(status_code=500, detail="文档创建后未能读取")
+
+    try:
+        extraction = _extract_and_import(payload, background_tasks)
+    except Exception as exc:  # noqa: BLE001
+        extraction = UnifiedImportExtractionResult(
+            attempted=True,
+            source="failed",
+            warnings=[BatchImportWarning(
+                code="structured_import_failed",
+                path="extraction",
+                message=f"诗词抽取或入库失败，RAG 文档已保留：{exc}",
+            )],
+        )
+
+    return UnifiedImportResponse(document=document, extraction=extraction)
+
+
+@router.post(
+    "/imports/unified",
+    tags=["imports"],
+    response_model=UnifiedImportResponse,
+    summary="统一导入文档并尝试抽取诗词",
+)
+def import_unified(payload: UnifiedImportRequest, background_tasks: BackgroundTasks):
+    return _run_unified_import(payload, background_tasks)
+
+
+def _decode_text(data: bytes) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "gb18030"):
         try:
-            with conn.cursor() as cur:
-                for author_key, (author, path) in author_inputs.items():
-                    author_id, match_count = find_author_id(cur, author.name)
-                    if author_id is not None:
-                        author_ids[author_key] = author_id
-                        summary.authors.matched += 1
-                        if match_count > 1:
-                            add_warning(warnings, "ambiguous_author_match", path, f"存在多个同名作者“{author.name}”，已使用 ID 最小的记录。")
-                        continue
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise HTTPException(status_code=400, detail="无法识别文本编码，请使用 UTF-8 或 GB18030")
 
-                    cur.execute(
-                        "INSERT INTO authors (name, bio) VALUES (%s, %s) RETURNING id",
-                        (author.name, author.bio),
-                    )
-                    new_id = cur.fetchone()[0]
-                    author_ids[author_key] = new_id
-                    created_author_ids.append(new_id)
-                    summary.authors.created += 1
 
-                for collection_key, (collection, path) in collection_inputs.items():
-                    collection_id, match_count = find_collection_id(cur, collection.name)
-                    if collection_id is not None:
-                        collection_ids[collection_key] = collection_id
-                        summary.collections.matched += 1
-                        if match_count > 1:
-                            add_warning(warnings, "ambiguous_collection_match", path, f"存在多个同名合集“{collection.name}”，已使用 ID 最小的记录。")
-                        continue
+def _extract_pdf_text(data: bytes) -> str:
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        pages: list[str] = []
+        for index, page in enumerate(reader.pages, start=1):
+            text = page.extract_text() or ""
+            if text.strip():
+                pages.append(f"# 第 {index} 页\n\n{text.strip()}")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"PDF 解析失败：{exc}") from exc
+    content = "\n\n".join(pages).strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="PDF 未提取到文本，可能是扫描版图片 PDF")
+    return content
 
-                    cur.execute(
-                        "INSERT INTO collections (name, description) VALUES (%s, %s) RETURNING id",
-                        (collection.name, collection.description),
-                    )
-                    new_id = cur.fetchone()[0]
-                    collection_ids[collection_key] = new_id
-                    created_collection_ids.append(new_id)
-                    summary.collections.created += 1
 
-                for poem_key, (poem, path) in poem_inputs.items():
-                    author_id = author_ids[poem_key[1]]
-                    poem_row, match_count = find_poem(cur, poem.title, author_id)
-                    if poem_row is not None:
-                        poem_ids[poem_key] = poem_row[0]
-                        summary.poems.matched += 1
-                        if match_count > 1:
-                            add_warning(warnings, "ambiguous_poem_match", path, f"存在多首同标题同作者诗词“{poem.title} / {poem.author}”，已使用 ID 最小的记录。")
-                        if poem_row[1].strip() != poem.content.strip():
-                            add_warning(warnings, "poem_content_differs", path, f"诗词“{poem.title} / {poem.author}”已存在，导入内容与现有内容不同，未覆盖。")
-                        continue
+def _parse_json_batch(raw_text: str) -> BatchImportRequest:
+    try:
+        return BatchImportRequest.model_validate(json.loads(raw_text))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="JSON 文件格式错误") from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=f"JSON 导入结构不符合要求：{exc}") from exc
 
-                    cur.execute(
-                        "INSERT INTO poems (title, author_id, content) VALUES (%s, %s, %s) RETURNING id",
-                        (poem.title, author_id, poem.content),
-                    )
-                    new_id = cur.fetchone()[0]
-                    poem_ids[poem_key] = new_id
-                    created_poem_ids.append(new_id)
-                    summary.poems.created += 1
 
-                seen_links: set[tuple[str, str, str]] = set()
-                for collection_key, title_key, author_key, path in iter_collection_links(payload):
-                    link_key = (collection_key, title_key, author_key)
-                    if link_key in seen_links:
-                        summary.collection_poems.skipped += 1
-                        add_warning(warnings, "duplicate_collection_poem_in_payload", path, "收录关系重复，已跳过后续项。")
-                        continue
-                    seen_links.add(link_key)
+@router.post(
+    "/imports/unified/file",
+    tags=["imports"],
+    response_model=UnifiedImportResponse,
+    summary="上传文件并统一导入",
+)
+async def import_unified_file(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    title: str | None = Form(default=None),
+    extract_poems: bool = Form(default=True),
+    max_extracted_poems: int = Form(default=80),
+):
+    data = await file.read()
+    if len(data) > MAX_UNIFIED_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="文件不能超过 50MB")
 
-                    collection_id = collection_ids[collection_key]
-                    poem_id = poem_ids.get((title_key, author_key))
-                    if poem_id is None:
-                        author_id = author_ids[author_key]
-                        poem_row, match_count = find_poem(cur, title_key, author_id)
-                        if poem_row is None:
-                            summary.collection_poems.skipped += 1
-                            add_warning(warnings, "poem_reference_not_found", path, f"找不到诗词“{title_key} / {author_key}”，收录关系已跳过。")
-                            continue
+    filename = file.filename or "uploaded"
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    display_title = (title or filename.rsplit(".", 1)[0]).strip() or "未命名文档"
+    batch_payload = None
 
-                        poem_id = poem_row[0]
-                        poem_ids[(title_key, author_key)] = poem_id
-                        if match_count > 1:
-                            add_warning(warnings, "ambiguous_poem_match", path, f"存在多首同标题同作者诗词“{title_key} / {author_key}”，已使用 ID 最小的记录。")
+    if ext in TEXT_EXTENSIONS:
+        content = _decode_text(data)
+    elif ext in STRUCTURED_EXTENSIONS:
+        content = _decode_text(data)
+        batch_payload = _parse_json_batch(content)
+    elif ext in PDF_EXTENSIONS:
+        content = _extract_pdf_text(data)
+    else:
+        raise HTTPException(status_code=400, detail="仅支持 txt / md / markdown / json / pdf 文件")
 
-                    cur.execute(
-                        """
-                        INSERT INTO collection_poems (collection_id, poem_id)
-                        VALUES (%s, %s)
-                        ON CONFLICT DO NOTHING
-                        RETURNING collection_id
-                        """,
-                        (collection_id, poem_id),
-                    )
-                    if cur.fetchone() is None:
-                        summary.collection_poems.matched += 1
-                    else:
-                        summary.collection_poems.created += 1
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-
-    for aid in created_author_ids:
-        background_tasks.add_task(sync_author_embedding, aid)
-    for cid in created_collection_ids:
-        background_tasks.add_task(sync_collection_embedding, cid)
-    for pid in created_poem_ids:
-        background_tasks.add_task(sync_poem_embedding, pid)
-
-    return BatchImportResponse(summary=summary, warnings=warnings)
+    payload = UnifiedImportRequest(
+        title=display_title,
+        content=content,
+        source_filename=filename,
+        batch_payload=batch_payload,
+        extract_poems=extract_poems,
+        max_extracted_poems=max_extracted_poems,
+    )
+    return _run_unified_import(payload, background_tasks)

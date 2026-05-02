@@ -18,9 +18,10 @@ import type {
 } from '../shared/types/api'
 
 const DIFFICULTY_OPTIONS: { value: FeihualingDifficulty; label: string; hint: string }[] = [
-  { value: 'easy', label: '初级', hint: '常见诗句优先' },
-  { value: 'medium', label: '中级', hint: '随机候选' },
-  { value: 'hard', label: '高级', hint: '偏门诗句优先' },
+  { value: 'easy', label: '初级', hint: '仅顶流诗句（约 10% 库）' },
+  { value: 'medium', label: '中级', hint: '常见及以上（约 30% 库）' },
+  { value: 'hard', label: '高级', hint: '全库，偏门优先' },
+  { value: 'expert', label: '炼狱', hint: '全库 + AI 可引用库外原句' },
 ]
 
 const STATUS_LABEL: Record<SessionRead['status'], string> = {
@@ -153,7 +154,7 @@ export function FeihualingPage() {
         break
       case 'agent_result':
         appendTurn(event.turn)
-        setAgentStep('')
+        setAgentStep(event.source === 'fallback' ? '已使用兜底检索完成本轮' : '')
         break
       case 'agent_surrender':
         setAgentStep('')
@@ -162,8 +163,10 @@ export function FeihualingPage() {
         )
         break
       case 'agent_error':
-        setAgentStep('')
-        setError(`Agent 错误：${event.message}`)
+        setAgentStep(`Agent 异常（${event.message}），切换兜底…`)
+        break
+      case 'agent_fallback_started':
+        setAgentStep(`兜底检索中：${event.reason}`)
         break
       case 'error':
         setAgentStep('')

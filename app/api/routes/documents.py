@@ -12,40 +12,10 @@ from app.schemas.document import (
     DocumentRead,
 )
 from app.schemas.poem import MessageResponse
-from app.services.documents import create_document, sync_document_embeddings
+from app.services.documents import create_document, load_document, sync_document_embeddings
 
 
 router = APIRouter(prefix="/documents", tags=["documents"])
-
-
-def _load_document(cur, document_id: int) -> DocumentRead | None:
-    cur.execute(
-        """
-        SELECT d.id, d.title, d.source_filename, d.created_at,
-               COALESCE(c.total, 0), COALESCE(c.embedded, 0)
-        FROM documents d
-        LEFT JOIN (
-            SELECT document_id,
-                   COUNT(*) AS total,
-                   COUNT(*) FILTER (WHERE embedding IS NOT NULL) AS embedded
-            FROM document_chunks
-            GROUP BY document_id
-        ) c ON c.document_id = d.id
-        WHERE d.id = %s
-        """,
-        (document_id,),
-    )
-    row = cur.fetchone()
-    if row is None:
-        return None
-    return DocumentRead(
-        id=row[0],
-        title=row[1],
-        source_filename=row[2],
-        created_at=row[3],
-        chunk_count=row[4],
-        embedded_count=row[5],
-    )
 
 
 @router.get("", response_model=DocumentListResponse, summary="获取文档列表")
@@ -167,8 +137,7 @@ def upload_document(payload: DocumentCreate, background_tasks: BackgroundTasks):
 
     background_tasks.add_task(sync_document_embeddings, document_id)
 
-    with get_connection() as conn, conn.cursor() as cur:
-        document = _load_document(cur, document_id)
+    document = load_document(document_id)
 
     if document is None:
         raise HTTPException(status_code=500, detail="文档创建后未能读取")

@@ -3,43 +3,47 @@ from __future__ import annotations
 import logging
 
 from app.db.connection import get_connection
+from app.schemas.document import DocumentRead
+from app.services.chunker import DEFAULT_CHUNK_SIZE, split_markdown
 from app.services.embeddings import embed_text
 
 
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_CHUNK_SIZE = 400
-
-
 def split_text(text: str, max_chunk_size: int = DEFAULT_CHUNK_SIZE) -> list[str]:
-    paragraphs = [p.strip() for p in text.replace("\r\n", "\n").split("\n\n") if p.strip()]
-    chunks: list[str] = []
-    buffer = ""
+    return split_markdown(text, max_chunk_size=max_chunk_size)
 
-    def flush():
-        nonlocal buffer
-        if buffer.strip():
-            chunks.append(buffer.strip())
-        buffer = ""
 
-    for para in paragraphs:
-        if len(para) > max_chunk_size:
-            flush()
-            for start in range(0, len(para), max_chunk_size):
-                chunks.append(para[start:start + max_chunk_size])
-            continue
-
-        if not buffer:
-            buffer = para
-        elif len(buffer) + len(para) + 2 <= max_chunk_size:
-            buffer = f"{buffer}\n\n{para}"
-        else:
-            flush()
-            buffer = para
-
-    flush()
-    return chunks
+def load_document(document_id: int) -> DocumentRead | None:
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT d.id, d.title, d.source_filename, d.created_at,
+                   COALESCE(c.total, 0), COALESCE(c.embedded, 0)
+            FROM documents d
+            LEFT JOIN (
+                SELECT document_id,
+                       COUNT(*) AS total,
+                       COUNT(*) FILTER (WHERE embedding IS NOT NULL) AS embedded
+                FROM document_chunks
+                GROUP BY document_id
+            ) c ON c.document_id = d.id
+            WHERE d.id = %s
+            """,
+            (document_id,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    return DocumentRead(
+        id=row[0],
+        title=row[1],
+        source_filename=row[2],
+        created_at=row[3],
+        chunk_count=row[4],
+        embedded_count=row[5],
+    )
 
 
 def create_document(title: str, content: str, source_filename: str | None) -> tuple[int, int]:

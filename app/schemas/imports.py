@@ -1,4 +1,8 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator
+
+from app.schemas.document import DocumentRead
 
 MAX_IMPORT_AUTHORS = 1000
 MAX_IMPORT_POEMS = 5000
@@ -113,3 +117,43 @@ class BatchImportWarning(BaseModel):
 class BatchImportResponse(BaseModel):
     summary: BatchImportSummary
     warnings: list[BatchImportWarning] = Field(default_factory=list)
+
+
+class UnifiedImportRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1)
+    source_filename: str | None = Field(default=None, max_length=200)
+    batch_payload: BatchImportRequest | None = None
+    extract_poems: bool = True
+    max_extracted_poems: int = Field(default=80, ge=1, le=200)
+
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, value: str) -> str:
+        return clean_required_text(value)
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must not be blank")
+        return stripped
+
+    @field_validator("source_filename")
+    @classmethod
+    def validate_source_filename(cls, value: str | None) -> str | None:
+        return clean_optional_text(value)
+
+
+class UnifiedImportExtractionResult(BaseModel):
+    attempted: bool
+    source: Literal["batch_payload", "llm", "skipped", "unavailable", "failed"]
+    extracted_poem_count: int = 0
+    imported: BatchImportResponse | None = None
+    warnings: list[BatchImportWarning] = Field(default_factory=list)
+
+
+class UnifiedImportResponse(BaseModel):
+    document: DocumentRead
+    extraction: UnifiedImportExtractionResult

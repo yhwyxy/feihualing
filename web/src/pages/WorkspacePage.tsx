@@ -4,7 +4,7 @@ const WORKSPACE_TABS = [
   { to: 'poems', label: '诗词' },
   { to: 'authors', label: '作者' },
   { to: 'collections', label: '合集' },
-  { to: 'documents', label: '文档' },
+  { to: 'documents', label: '导入' },
   { to: 'rag', label: '语义搜索' },
   { to: 'settings', label: '设置' },
 ]

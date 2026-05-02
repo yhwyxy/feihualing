@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-Difficulty = Literal["easy", "medium", "hard"]
+Difficulty = Literal["easy", "medium", "hard", "expert"]
 SessionStatus = Literal["in_progress", "user_won", "agent_won", "abandoned"]
 Speaker = Literal["user", "agent"]
 
