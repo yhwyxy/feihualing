@@ -17,6 +17,8 @@ from app.services.embeddings import sync_collection_embedding
 
 router = APIRouter()
 
+COLLECTION_PATCH_FIELDS = {"name", "description"}
+
 
 def serialize_collection(row) -> CollectionRead:
     return CollectionRead(
@@ -323,7 +325,7 @@ def update_collection(collection_id: int, collection: CollectionUpdate, backgrou
     summary="局部更新合集",
 )
 def patch_collection(collection_id: int, collection: CollectionPatch, background_tasks: BackgroundTasks):
-    update_data = collection.to_update_data()
+    update_data = {k: v for k, v in collection.to_update_data().items() if k in COLLECTION_PATCH_FIELDS}
 
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")

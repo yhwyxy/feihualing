@@ -15,6 +15,8 @@ from app.services.embeddings import sync_author_embedding
 
 router = APIRouter()
 
+AUTHOR_PATCH_FIELDS = {"name", "bio"}
+
 
 def serialize_author(row) -> AuthorRead:
     return AuthorRead(
@@ -314,7 +316,7 @@ def update_author(author_id: int, author: AuthorUpdate, background_tasks: Backgr
     summary="局部更新作者",
 )
 def patch_author(author_id: int, author: AuthorPatch, background_tasks: BackgroundTasks):
-    update_data = author.model_dump(exclude_none=True)
+    update_data = {k: v for k, v in author.model_dump(exclude_none=True).items() if k in AUTHOR_PATCH_FIELDS}
 
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")

@@ -21,6 +21,8 @@ MAX_EMBED_CHARS = 500
 
 def embed_text(text: str) -> np.ndarray:
     clean = text.strip()
+    if not clean:
+        raise EmbeddingError("输入文本为空")
     if len(clean) > MAX_EMBED_CHARS:
         logger.warning(
             "embed_text input truncated: %d -> %d chars",

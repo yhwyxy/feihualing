@@ -14,6 +14,8 @@ from app.services.parse_jobs import schedule_poem_parse
 
 router = APIRouter()
 
+POEM_PATCH_FIELDS = {"title", "content", "author_id"}
+
 
 def serialize_poem(row) -> PoemRead:
     return PoemRead(
@@ -203,7 +205,7 @@ def update_poem(poem_id: int, poem: PoemUpdate, background_tasks: BackgroundTask
     summary="局部更新诗词",
 )
 def patch_poem(poem_id: int, poem: PoemPatch, background_tasks: BackgroundTasks):
-    update_data = poem.to_update_data()
+    update_data = {k: v for k, v in poem.to_update_data().items() if k in POEM_PATCH_FIELDS}
 
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -220,10 +222,11 @@ def patch_poem(poem_id: int, poem: PoemPatch, background_tasks: BackgroundTasks)
             params.append(poem_id)
 
             query = f"""
-                UPDATE poems
+                UPDATE poems p
                 SET {assignments}
-                WHERE id = %s
-                RETURNING id, title, author_id, content, created_at
+                FROM authors a
+                WHERE p.id = %s AND a.id = p.author_id
+                RETURNING p.id, p.title, p.author_id, a.name, p.content, p.created_at
             """
             cur.execute(query, params)
             row = cur.fetchone()
@@ -232,11 +235,6 @@ def patch_poem(poem_id: int, poem: PoemPatch, background_tasks: BackgroundTasks)
     if row is None:
         raise HTTPException(status_code=404, detail="Poem not found")
 
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT name FROM authors WHERE id = %s", (row[2],))
-            author_name = cur.fetchone()[0]
-
     background_tasks.add_task(sync_poem_embedding, row[0])
     schedule_poem_parse(background_tasks, row[0], job_type="reparse")
 
@@ -244,9 +242,9 @@ def patch_poem(poem_id: int, poem: PoemPatch, background_tasks: BackgroundTasks)
         id=row[0],
         title=row[1],
         author_id=row[2],
-        author=author_name,
-        content=row[3],
-        created_at=row[4],
+        author=row[3],
+        content=row[4],
+        created_at=row[5],
     )
 
 

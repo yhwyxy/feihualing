@@ -226,7 +226,7 @@ def agent_pick_line_stream(
         base_url=settings.dashscope_base_url,
     )
     messages: list[dict] = [
-        {"role": "system", "content": AGENT_SYSTEM_PROMPT},
+        {"role": "system", "content": _system_prompt_for(difficulty)},
         {"role": "user", "content": _build_user_prompt(
             target_char, difficulty, used_lines,
         )},
