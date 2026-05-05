@@ -16,6 +16,12 @@ export interface AuthorRead {
   created_at: string
 }
 
+export interface AuthorDynastyRead {
+  author_id: number
+  concept_id: number | null
+  name: string | null
+}
+
 export interface AuthorWritePayload {
   name: string
   bio: string | null
@@ -57,6 +63,174 @@ export interface CollectionPoemRead {
   collection_id: number
   poem: PoemRead
   created_at: string
+}
+
+export type ConceptType = 'char' | 'phrase' | 'place' | 'image' | 'theme' | 'dynasty'
+
+export type ConceptSource = 'parser' | 'manual' | 'import' | 'llm'
+
+export interface ConceptRead {
+  id: number
+  name: string
+  normalized_name: string
+  type: ConceptType
+  description: string | null
+  is_active: boolean
+  poem_count: number | null
+  line_count: number | null
+  created_at: string
+}
+
+export interface ConceptAliasRead {
+  id: number
+  concept_id: number
+  alias: string
+  normalized_alias: string
+  created_at: string
+}
+
+export interface ConceptAliasListResponse {
+  concept_id: number
+  aliases: ConceptAliasRead[]
+}
+
+export interface ConceptQueryParams {
+  keyword?: string
+  type?: ConceptType
+  include_counts?: boolean
+  limit?: number
+  offset?: number
+}
+
+export interface ConceptGraphNode {
+  id: string
+  type: string
+  label: string
+  meta: Record<string, unknown>
+}
+
+export interface ConceptGraphEdge {
+  id: string
+  source: string
+  target: string
+  type: string
+  meta: Record<string, unknown>
+}
+
+export interface ConceptGraphResponse {
+  center: ConceptGraphNode
+  nodes: ConceptGraphNode[]
+  edges: ConceptGraphEdge[]
+  limits: {
+    limit_poems: number
+    limit_lines: number
+  }
+  truncated: boolean
+}
+
+export interface ConceptGraphParams {
+  depth?: number
+  limit_poems?: number
+  limit_lines?: number
+  author_id?: number
+  dynasty?: string
+  node_types?: string
+  source?: ConceptSource
+  min_popularity?: number
+  min_matched_count?: number
+}
+
+export interface LineConceptRead {
+  line_index: number
+  line_text: string
+  matched_text: string
+  start_offset: number
+  source: ConceptSource
+}
+
+export interface PoemConceptRead {
+  id: number
+  name: string
+  type: ConceptType
+  confidence: string
+  source: ConceptSource
+  matched_count: number
+  matched_texts: string[]
+  lines: LineConceptRead[]
+}
+
+export interface PoemConceptsResponse {
+  poem_id: number
+  concepts: PoemConceptRead[]
+}
+
+export interface ParseJobScheduledResponse {
+  message: string
+  job_id: number
+  poem_id: number
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped'
+}
+
+export interface ParseJobRead {
+  id: number
+  poem_id: number | null
+  job_type: 'initial_parse' | 'reparse' | 'delete_cleanup' | 'batch_backfill'
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped'
+  trigger_source: string
+  started_at: string | null
+  finished_at: string | null
+  error_message: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ParseLogRead {
+  id: number
+  job_id: number
+  level: 'info' | 'warning' | 'error'
+  message: string
+  payload: Record<string, unknown> | null
+  created_at: string
+}
+
+export interface ParseJobDetailResponse {
+  job: ParseJobRead
+  logs: ParseLogRead[]
+}
+
+export interface ManualLineConceptPayload {
+  concept_id: number
+  line_index: number
+  matched_text?: string | null
+  start_offset?: number
+}
+
+export interface FeihualingQueryItem {
+  line: string
+  line_index: number
+  matched_text: string
+  poem: {
+    id: number
+    title: string
+  }
+  author: {
+    id: number | null
+    name: string
+  }
+  concepts: Array<{
+    id: number
+    name: string
+    type: ConceptType
+  }>
+}
+
+export interface FeihualingQueryResponse {
+  keyword: string
+  position: 'any' | 'start' | 'end'
+  items: FeihualingQueryItem[]
+  total: number
+  limit: number
+  offset: number
 }
 
 export interface PoemQueryParams {

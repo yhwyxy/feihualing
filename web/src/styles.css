@@ -198,11 +198,15 @@ button {
 }
 
 .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 14px;
   padding: 10px 16px;
   background: rgba(255, 255, 255, 0.88);
   color: #334155;
+  text-decoration: none;
 }
 
 .button-primary {
@@ -619,9 +623,262 @@ button {
   margin: 8px 0 0;
 }
 
+.concept-list,
+.concept-detail-stack,
+.concept-preview-groups,
+.graph-layout,
+.graph-node-list,
+.graph-edge-list,
+.concept-hit-list,
+.concept-job-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.concept-row {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid rgba(226, 232, 240, 0.92);
+  border-radius: 18px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.9);
+  text-align: left;
+  color: #334155;
+}
+
+.concept-row-active {
+  border-color: rgba(14, 116, 144, 0.28);
+  box-shadow: 0 14px 30px rgba(8, 145, 178, 0.12);
+}
+
+.concept-row-main,
+.concept-row-meta,
+.concept-hit-header,
+.concept-preview-header,
+.graph-group-header,
+.graph-edge-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.concept-row-title {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.concept-row-meta {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.concept-type-badge,
+.concept-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+.concept-type-badge {
+  background: rgba(14, 116, 144, 0.1);
+  color: #155e75;
+}
+
+.concept-stat-grid,
+.graph-group-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.concept-stat-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.concept-stat-card,
+.graph-center-card,
+.graph-group-card,
+.concept-preview-panel,
+.concept-hit-card {
+  border: 1px solid rgba(226, 232, 240, 0.92);
+  border-radius: 18px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.concept-stat-card,
+.graph-center-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.concept-stat-label {
+  color: #64748b;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.concept-preview-header h3,
+.graph-group-header h3,
+.detail-card h3 {
+  margin: 0;
+}
+
+.concept-preview-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.concept-preview-group h4 {
+  margin: 0;
+  font-size: 14px;
+  color: #475569;
+}
+
+.concept-chip-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.concept-chip {
+  background: rgba(226, 232, 240, 0.58);
+  color: #334155;
+}
+
+.concept-link-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(14, 116, 144, 0.16);
+  border-radius: 999px;
+  padding: 7px 12px;
+  background: rgba(236, 254, 255, 0.84);
+  color: #155e75;
+}
+
+.concept-manage-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(226, 232, 240, 0.92);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #334155;
+}
+
+.chip-remove-button {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 999px;
+  background: rgba(248, 113, 113, 0.12);
+  color: #b91c1c;
+}
+
+.concept-chip-line {
+  background: rgba(254, 249, 195, 0.75);
+  color: #854d0e;
+}
+
+.concept-chip-poem {
+  background: rgba(220, 252, 231, 0.8);
+  color: #166534;
+}
+
+.concept-chip-author {
+  background: rgba(219, 234, 254, 0.8);
+  color: #1d4ed8;
+}
+
+.concept-chip-dynasty {
+  background: rgba(254, 226, 226, 0.8);
+  color: #b91c1c;
+}
+
+.graph-group-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.graph-node-button {
+  width: 100%;
+  border: 1px solid rgba(226, 232, 240, 0.92);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: rgba(248, 250, 252, 0.8);
+  text-align: left;
+  color: #334155;
+}
+
+.graph-node-button-active {
+  border-color: rgba(14, 116, 144, 0.28);
+  background: rgba(236, 254, 255, 0.9);
+}
+
+.graph-node-button-linked {
+  border-color: rgba(59, 130, 246, 0.22);
+  background: rgba(239, 246, 255, 0.84);
+}
+
+.graph-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 4px;
+  color: #475569;
+}
+
+.graph-edge-row {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(248, 250, 252, 0.84);
+}
+
+.concept-json-block {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #334155;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+}
+
+.poem-concept-panel {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(226, 232, 240, 0.92);
+}
+
+.concept-manual-form {
+  margin-bottom: 14px;
+}
+
+.poem-concept-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
 @media (max-width: 960px) {
   .app-shell,
-  .page-grid-split {
+  .page-grid-split,
+  .page-grid-split-wide,
+  .concept-stat-grid,
+  .graph-group-grid {
     grid-template-columns: 1fr;
   }
 

@@ -24,6 +24,7 @@ from app.services.embeddings import (
     sync_poem_embedding,
 )
 from app.services.imports import BatchImportOutcome, import_batch_payload
+from app.services.parse_jobs import schedule_poem_parse
 from app.services.poem_extraction import extract_poems_from_text
 
 router = APIRouter()
@@ -41,6 +42,12 @@ def schedule_import_embeddings(outcome: BatchImportOutcome, background_tasks: Ba
         background_tasks.add_task(sync_collection_embedding, cid)
     for pid in outcome.created_poem_ids:
         background_tasks.add_task(sync_poem_embedding, pid)
+        schedule_poem_parse(
+            background_tasks,
+            pid,
+            job_type="initial_parse",
+            trigger_source="import",
+        )
 
 
 @router.post(

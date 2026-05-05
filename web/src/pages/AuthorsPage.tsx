@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { FormEvent, useMemo, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useState } from 'react'
 
 import type { AuthorRead, AuthorWritePayload } from '../shared/types/api'
-import { deleteAuthor, getAuthorPoems, listAuthors, updateAuthor } from '../shared/api/authors'
+import { deleteAuthor, deleteAuthorDynasty, getAuthorDynasty, getAuthorPoems, listAuthors, setAuthorDynasty, updateAuthor } from '../shared/api/authors'
+import { listConcepts } from '../shared/api/concepts'
 import { ApiError } from '../shared/api/http'
 import { EmptyState } from '../shared/ui/EmptyState'
 import { CollapsiblePoemCard } from '../shared/ui/CollapsiblePoemCard'
@@ -24,6 +25,7 @@ export function AuthorsPage() {
   const [formData, setFormData] = useState<AuthorWritePayload>(EMPTY_FORM)
   const [formOpen, setFormOpen] = useState(false)
   const [message, setMessage] = useState('')
+  const [dynastyConceptId, setDynastyConceptId] = useState<number | ''>('')
 
   const authorsQuery = useQuery({
     queryKey: ['authors', keyword],
@@ -36,6 +38,17 @@ export function AuthorsPage() {
   const poemsQuery = useQuery({
     queryKey: ['author-poems', selectedAuthorId],
     queryFn: () => getAuthorPoems(selectedAuthorId!, 20, 0),
+    enabled: selectedAuthorId !== null,
+  })
+
+  const dynastiesQuery = useQuery({
+    queryKey: ['dynasty-concepts'],
+    queryFn: () => listConcepts({ type: 'dynasty', limit: 100, offset: 0, include_counts: false }),
+  })
+
+  const authorDynastyQuery = useQuery({
+    queryKey: ['author-dynasty', selectedAuthorId],
+    queryFn: () => getAuthorDynasty(selectedAuthorId!),
     enabled: selectedAuthorId !== null,
   })
 
@@ -72,8 +85,36 @@ export function AuthorsPage() {
     },
   })
 
-  const isSubmitting = updateMutation.isPending || deleteMutation.isPending
+  const setDynastyMutation = useMutation({
+    mutationFn: ({ authorId, conceptId }: { authorId: number; conceptId: number }) =>
+      setAuthorDynasty(authorId, conceptId),
+    onSuccess: () => {
+      setMessage('作者朝代已更新')
+      queryClient.invalidateQueries({ queryKey: ['author-dynasty', selectedAuthorId] })
+    },
+  })
+
+  const deleteDynastyMutation = useMutation({
+    mutationFn: deleteAuthorDynasty,
+    onSuccess: () => {
+      setMessage('作者朝代已删除')
+      queryClient.invalidateQueries({ queryKey: ['author-dynasty', selectedAuthorId] })
+      setDynastyConceptId('')
+    },
+  })
+
+  const isSubmitting =
+    updateMutation.isPending ||
+    deleteMutation.isPending ||
+    setDynastyMutation.isPending ||
+    deleteDynastyMutation.isPending
   const submitLabel = useMemo(() => '保存修改', [])
+
+  const selectedDynastyId = authorDynastyQuery.data?.concept_id ?? null
+
+  useEffect(() => {
+    setDynastyConceptId(selectedDynastyId ?? '')
+  }, [selectedDynastyId, selectedAuthorId])
 
   function handleSearchSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -133,6 +174,12 @@ export function AuthorsPage() {
         bio: formData.bio?.trim() ? formData.bio.trim() : null,
       },
     })
+  }
+
+  function handleDynastySubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!selectedAuthorId || !dynastyConceptId) return
+    setDynastyMutation.mutate({ authorId: selectedAuthorId, conceptId: dynastyConceptId })
   }
 
   return (
@@ -226,6 +273,42 @@ export function AuthorsPage() {
               <div className="detail-card">
                 <h3>{selectedAuthor.name}</h3>
                 <p>{selectedAuthor.bio || '暂无简介'}</p>
+              </div>
+
+              <div className="detail-card">
+                <h3>朝代</h3>
+                <p>{authorDynastyQuery.data?.name || '未关联朝代'}</p>
+                <form className="toolbar-form" onSubmit={handleDynastySubmit}>
+                  <div className="toolbar-row">
+                    <select
+                      className="input"
+                      value={dynastyConceptId}
+                      onChange={(event) => setDynastyConceptId(event.target.value ? Number(event.target.value) : '')}
+                    >
+                      <option value="">选择朝代</option>
+                      {dynastiesQuery.data?.items.map((dynasty) => (
+                        <option key={dynasty.id} value={dynasty.id}>
+                          {dynasty.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button className="button button-primary" type="submit" disabled={!dynastyConceptId || isSubmitting}>
+                      保存朝代
+                    </button>
+                  </div>
+                  {selectedDynastyId ? (
+                    <div className="inline-actions">
+                      <button
+                        className="button"
+                        type="button"
+                        disabled={isSubmitting}
+                        onClick={() => deleteDynastyMutation.mutate(selectedAuthor.id)}
+                      >
+                        清除朝代
+                      </button>
+                    </div>
+                  ) : null}
+                </form>
               </div>
 
               <div className="detail-card">

@@ -3,6 +3,8 @@ import { Navigate, RouterProvider, createBrowserRouter } from 'react-router-dom'
 import { AppShell } from '../shared/ui/AppShell'
 import { AuthorsPage } from '../pages/AuthorsPage'
 import { CollectionsPage } from '../pages/CollectionsPage'
+import { ConceptGraphPage } from '../pages/ConceptGraphPage'
+import { ConceptsPage } from '../pages/ConceptsPage'
 import { DocumentsPage } from '../pages/DocumentsPage'
 import { FeihualingPage } from '../pages/FeihualingPage'
 import { PoemsPage } from '../pages/PoemsPage'
@@ -25,6 +27,8 @@ const router = createBrowserRouter([
           { path: 'poems', element: <PoemsPage /> },
           { path: 'authors', element: <AuthorsPage /> },
           { path: 'collections', element: <CollectionsPage /> },
+          { path: 'concepts', element: <ConceptsPage /> },
+          { path: 'concepts/:conceptId', element: <ConceptGraphPage /> },
           { path: 'documents', element: <DocumentsPage /> },
           { path: 'rag', element: <RagPage /> },
           { path: 'settings', element: <SettingsPage /> },
@@ -33,6 +37,7 @@ const router = createBrowserRouter([
       { path: 'poems', element: <Navigate to="/workspace/poems" replace /> },
       { path: 'authors', element: <Navigate to="/workspace/authors" replace /> },
       { path: 'collections', element: <Navigate to="/workspace/collections" replace /> },
+      { path: 'concepts', element: <Navigate to="/workspace/concepts" replace /> },
       { path: 'documents', element: <Navigate to="/workspace/documents" replace /> },
       { path: 'rag', element: <Navigate to="/workspace/rag" replace /> },
     ],

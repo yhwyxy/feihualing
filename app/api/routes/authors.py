@@ -3,6 +3,8 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from app.db.connection import get_connection
 from app.schemas.author import (
     AuthorCreate,
+    AuthorDynastyRead,
+    AuthorDynastyUpdate,
     AuthorListResponse,
     AuthorPatch,
     AuthorRead,
@@ -146,6 +148,109 @@ def get_author(author_id: int):
         raise HTTPException(status_code=404, detail="Author not found")
 
     return serialize_author(row)
+
+
+@router.get(
+    "/authors/{author_id}/dynasty",
+    tags=["authors"],
+    response_model=AuthorDynastyRead,
+    summary="获取作者朝代关联",
+)
+def get_author_dynasty(author_id: int):
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id FROM authors WHERE id = %s", (author_id,))
+        if cur.fetchone() is None:
+            raise HTTPException(status_code=404, detail="Author not found")
+
+        cur.execute(
+            """
+            SELECT c.id, c.name
+            FROM author_concepts ac
+            JOIN concepts c ON c.id = ac.concept_id
+            WHERE ac.author_id = %s AND c.type = 'dynasty'
+            ORDER BY ac.updated_at DESC NULLS LAST, ac.created_at DESC
+            LIMIT 1
+            """,
+            (author_id,),
+        )
+        row = cur.fetchone()
+
+    return AuthorDynastyRead(
+        author_id=author_id,
+        concept_id=row[0] if row else None,
+        name=row[1] if row else None,
+    )
+
+
+@router.put(
+    "/authors/{author_id}/dynasty",
+    tags=["authors"],
+    response_model=AuthorDynastyRead,
+    summary="设置作者朝代关联",
+)
+def set_author_dynasty(author_id: int, payload: AuthorDynastyUpdate):
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id FROM authors WHERE id = %s", (author_id,))
+        if cur.fetchone() is None:
+            raise HTTPException(status_code=404, detail="Author not found")
+
+        cur.execute(
+            "SELECT id, name FROM concepts WHERE id = %s AND type = 'dynasty' AND is_active = true",
+            (payload.concept_id,),
+        )
+        concept_row = cur.fetchone()
+        if concept_row is None:
+            raise HTTPException(status_code=404, detail="Dynasty concept not found")
+
+        cur.execute(
+            """
+            DELETE FROM author_concepts
+            USING concepts
+            WHERE author_concepts.concept_id = concepts.id
+              AND author_concepts.author_id = %s
+              AND concepts.type = 'dynasty'
+            """,
+            (author_id,),
+        )
+        cur.execute(
+            """
+            INSERT INTO author_concepts (author_id, concept_id, source)
+            VALUES (%s, %s, 'manual')
+            ON CONFLICT (author_id, concept_id)
+            DO UPDATE SET source = 'manual', updated_at = now()
+            """,
+            (author_id, payload.concept_id),
+        )
+        conn.commit()
+
+    return AuthorDynastyRead(author_id=author_id, concept_id=concept_row[0], name=concept_row[1])
+
+
+@router.delete(
+    "/authors/{author_id}/dynasty",
+    tags=["authors"],
+    response_model=MessageResponse,
+    summary="删除作者朝代关联",
+)
+def delete_author_dynasty(author_id: int):
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id FROM authors WHERE id = %s", (author_id,))
+        if cur.fetchone() is None:
+            raise HTTPException(status_code=404, detail="Author not found")
+
+        cur.execute(
+            """
+            DELETE FROM author_concepts
+            USING concepts
+            WHERE author_concepts.concept_id = concepts.id
+              AND author_concepts.author_id = %s
+              AND concepts.type = 'dynasty'
+            """,
+            (author_id,),
+        )
+        conn.commit()
+
+    return MessageResponse(message="Author dynasty deleted")
 
 
 @router.post(

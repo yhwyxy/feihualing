@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useState } from 'react'
 
 interface CollapsiblePoemCardProps {
@@ -12,6 +13,7 @@ interface CollapsiblePoemCardProps {
   deleteLabel?: string
   addToCollectionLabel?: string
   disabled?: boolean
+  expandedContent?: ReactNode
 }
 
 export function CollapsiblePoemCard({
@@ -26,6 +28,7 @@ export function CollapsiblePoemCard({
   deleteLabel = '删除',
   addToCollectionLabel = '加入合集',
   disabled,
+  expandedContent,
 }: CollapsiblePoemCardProps) {
   const [expanded, setExpanded] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -107,6 +110,7 @@ export function CollapsiblePoemCard({
       </div>
 
       {expanded ? <p className="poem-content">{content}</p> : null}
+      {expanded ? expandedContent : null}
     </article>
   )
 }

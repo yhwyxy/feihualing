@@ -14,6 +14,10 @@ export function listPoems(params: PoemQueryParams = {}) {
   return apiFetch<PageResponse<PoemRead>>(`/poems${suffix}`)
 }
 
+export function getPoem(poemId: number) {
+  return apiFetch<PoemRead>(`/poems/${poemId}`)
+}
+
 export function createPoem(payload: PoemWritePayload) {
   return apiFetch<PoemRead>('/poems', {
     method: 'POST',

@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { FormEvent, useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 
 import { listAuthors } from '../shared/api/authors'
 import { addPoemToCollection, createCollection, listCollections } from '../shared/api/collections'
+import { getPoemConcepts, reparsePoem } from '../shared/api/concepts'
 import { ApiError } from '../shared/api/http'
 import { createPoem, deletePoem, listPoems, updatePoem } from '../shared/api/poems'
 import type { CollectionWritePayload, PoemRead, PoemWritePayload } from '../shared/types/api'
@@ -49,6 +50,7 @@ const SEARCH_MODES: SearchModeConfig[] = [
 ]
 
 export function PoemsPage() {
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const keyword = searchParams.get('keyword') ?? ''
@@ -153,12 +155,24 @@ export function PoemsPage() {
     },
   })
 
+  const reparseMutation = useMutation({
+    mutationFn: reparsePoem,
+    onSuccess: (result) => {
+      setMessage(`已创建重解析任务 #${result.job_id}`)
+      queryClient.invalidateQueries({ queryKey: ['poem-concepts'] })
+    },
+    onError: () => {
+      setMessage('重解析任务创建失败，请稍后重试')
+    },
+  })
+
   const isSubmitting =
     createMutation.isPending ||
     updateMutation.isPending ||
     deleteMutation.isPending ||
     createCollectionMutation.isPending ||
     addToCollectionsMutation.isPending
+    || reparseMutation.isPending
 
   const submitLabel = useMemo(() => (editingPoem ? '保存修改' : '新增诗词'), [editingPoem])
   const activeSearchMode = useMemo(
@@ -370,6 +384,14 @@ export function PoemsPage() {
                   onEdit={() => handleEdit(poem)}
                   onDelete={() => deleteMutation.mutate(poem.id)}
                   disabled={isSubmitting}
+                  expandedContent={
+                    <PoemConceptPanel
+                      poemId={poem.id}
+                      onOpenConcept={(conceptId) => navigate(`/workspace/concepts/${conceptId}`)}
+                      onReparse={() => reparseMutation.mutate(poem.id)}
+                      reparsePending={reparseMutation.isPending}
+                    />
+                  }
                 />
               ))}
             </div>
@@ -553,5 +575,58 @@ export function PoemsPage() {
         </div>
       ) : null}
     </>
+  )
+}
+
+interface PoemConceptPanelProps {
+  poemId: number
+  onOpenConcept: (conceptId: number) => void
+  onReparse: () => void
+  reparsePending: boolean
+}
+
+function PoemConceptPanel({
+  poemId,
+  onOpenConcept,
+  onReparse,
+  reparsePending,
+}: PoemConceptPanelProps) {
+  const poemConceptsQuery = useQuery({
+    queryKey: ['poem-concepts', poemId],
+    queryFn: () => getPoemConcepts(poemId),
+  })
+
+  return (
+    <div className="poem-concept-panel">
+      <div className="poem-concept-header">
+        <strong>概念命中</strong>
+        <button className="button" type="button" disabled={reparsePending} onClick={onReparse}>
+          重新解析
+        </button>
+      </div>
+
+      {poemConceptsQuery.isLoading ? <p className="hint">概念读取中...</p> : null}
+      {poemConceptsQuery.isError ? <p className="hint">概念读取失败。</p> : null}
+
+      {poemConceptsQuery.data?.concepts.length ? (
+        <div className="concept-chip-wrap">
+          {poemConceptsQuery.data.concepts.map((concept) => (
+            <button
+              key={concept.id}
+              className="concept-link-chip"
+              type="button"
+              onClick={() => onOpenConcept(concept.id)}
+            >
+              <span>{concept.name}</span>
+              <span className="muted">{concept.matched_count}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {poemConceptsQuery.data && poemConceptsQuery.data.concepts.length === 0 ? (
+        <p className="hint">当前还没有概念命中。</p>
+      ) : null}
+    </div>
   )
 }

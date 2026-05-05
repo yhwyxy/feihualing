@@ -10,6 +10,7 @@ from app.schemas.poem import (
     PoemUpdate,
 )
 from app.services.embeddings import sync_poem_embedding
+from app.services.parse_jobs import schedule_poem_parse
 
 router = APIRouter()
 
@@ -141,6 +142,7 @@ def create_poem(poem: PoemCreate, background_tasks: BackgroundTasks):
         conn.commit()
 
     background_tasks.add_task(sync_poem_embedding, row[0])
+    schedule_poem_parse(background_tasks, row[0], job_type="initial_parse")
 
     return PoemRead(
         id=row[0],
@@ -182,6 +184,7 @@ def update_poem(poem_id: int, poem: PoemUpdate, background_tasks: BackgroundTask
         raise HTTPException(status_code=404, detail="Poem not found")
 
     background_tasks.add_task(sync_poem_embedding, row[0])
+    schedule_poem_parse(background_tasks, row[0], job_type="reparse")
 
     return PoemRead(
         id=row[0],
@@ -235,6 +238,7 @@ def patch_poem(poem_id: int, poem: PoemPatch, background_tasks: BackgroundTasks)
             author_name = cur.fetchone()[0]
 
     background_tasks.add_task(sync_poem_embedding, row[0])
+    schedule_poem_parse(background_tasks, row[0], job_type="reparse")
 
     return PoemRead(
         id=row[0],

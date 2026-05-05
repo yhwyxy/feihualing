@@ -30,3 +30,13 @@ class AuthorRead(AuthorBase):
 
 class AuthorListResponse(PageResponse[AuthorRead]):
     pass
+
+
+class AuthorDynastyRead(BaseModel):
+    author_id: int
+    concept_id: int | None = None
+    name: str | None = None
+
+
+class AuthorDynastyUpdate(BaseModel):
+    concept_id: int = Field(gt=0)

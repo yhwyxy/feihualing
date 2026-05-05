@@ -1,5 +1,5 @@
 import { apiFetch } from './http'
-import type { AuthorRead, AuthorWritePayload, PageResponse, PoemRead } from '../types/api'
+import type { AuthorDynastyRead, AuthorRead, AuthorWritePayload, PageResponse, PoemRead } from '../types/api'
 
 export function listAuthors(keyword = '', limit = 20, offset = 0) {
   const search = new URLSearchParams()
@@ -34,4 +34,21 @@ export function getAuthorPoems(authorId: number, limit = 20, offset = 0) {
   return apiFetch<PageResponse<PoemRead>>(
     `/authors/${authorId}/poems?limit=${limit}&offset=${offset}`,
   )
+}
+
+export function getAuthorDynasty(authorId: number) {
+  return apiFetch<AuthorDynastyRead>(`/authors/${authorId}/dynasty`)
+}
+
+export function setAuthorDynasty(authorId: number, conceptId: number) {
+  return apiFetch<AuthorDynastyRead>(`/authors/${authorId}/dynasty`, {
+    method: 'PUT',
+    body: JSON.stringify({ concept_id: conceptId }),
+  })
+}
+
+export function deleteAuthorDynasty(authorId: number) {
+  return apiFetch<{ message: string }>(`/authors/${authorId}/dynasty`, {
+    method: 'DELETE',
+  })
 }
